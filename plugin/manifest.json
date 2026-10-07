@@ -98,7 +98,7 @@
     },
     {
       "Name": "Mix Volume",
-      "Icon": "images/action-mix-volume.svg",
+      "Icon": "images/action-mix-volume-muted.svg",
       "PropertyInspectorPath": "property-inspector/mix-volume/inspector.html",
       "Tooltip": "Dial: rotate to adjust mix volume, press to toggle mix mute",
       "UUID": "com.ulanzi.ulanzistudio.wavelink.mix-volume",
@@ -112,7 +112,11 @@
       },
       "States": [
         {
-          "Name": "Mix Volume",
+          "Name": "Muted",
+          "Image": "images/action-mix-volume-muted.svg"
+        },
+        {
+          "Name": "Unmuted",
           "Image": "images/action-mix-volume.svg"
         }
       ]

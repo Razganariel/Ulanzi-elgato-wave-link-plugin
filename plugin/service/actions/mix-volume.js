@@ -1,8 +1,9 @@
 /**
  * MIX VOLUME DIAL — one encoder, bound to one mix.
  *
- * Same contract as CHANNEL VOLUME DIAL: the host owns the key and its Title, the
- * plugin fills the dial once with the mix name, and nothing is displayed.
+ * Same contract as CHANNEL VOLUME DIAL: the host owns the key and its Title, and the
+ * plugin draws the dial's icon alone, following the mute of the mix -- the same state
+ * a press toggles, so the two never disagree.
  *
  * Note this drives the master fader of the mix, which Wave Link only shows in the
  * mix editor. That is the mix's own volume, not the level of any channel within it.
@@ -29,11 +30,21 @@ function bounds(settings) {
   return { min, max };
 }
 
-/** Draws the key, once. The dial names the mix. */
-export function render({ $UD, context, isEncoder }) {
-  setStateIcon($UD, context, STATE.DEFAULT);
+/**
+ * Draws the key and the dial, both following the mute of the mix.
+ *
+ * The press toggles the mix's own mute, so both the key and the dial have to show it.
+ * This action used to declare a single state and always draw the same icon, which made
+ * the press mute the mix in complete silence: the user could not tell whether it had
+ * registered, or in which direction it had gone.
+ */
+export function render({ $UD, context, mix, isEncoder }) {
+  const muted = Boolean(mix?.isMuted);
+  setStateIcon($UD, context, muted ? STATE.MUTED : STATE.UNMUTED);
   // The dial's text is the host's Title; we only draw the icon there.
-  if (isEncoder) setEncoderIcon($UD, context, ENCODER_ICON.MIX_VOLUME);
+  if (isEncoder) {
+    setEncoderIcon($UD, context, muted ? ENCODER_ICON.MIX_VOLUME_MUTED : ENCODER_ICON.MIX_VOLUME);
+  }
 }
 
 export async function onDialRotate(ctx, message) {

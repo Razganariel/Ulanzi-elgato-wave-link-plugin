@@ -37,6 +37,7 @@ export const ENCODER_ICON = Object.freeze({
   CHANNEL_VOLUME: 'images/action-channel-volume.svg',
   CHANNEL_VOLUME_MUTED: 'images/action-channel-volume-muted.svg',
   MIX_VOLUME: 'images/action-mix-volume.svg',
+  MIX_VOLUME_MUTED: 'images/action-mix-volume-muted.svg',
 });
 
 export const REPAINT_DELAY_MS = 400;

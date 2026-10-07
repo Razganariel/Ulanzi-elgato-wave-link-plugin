@@ -120,18 +120,26 @@ test('every action draws a real icon as its first state', () => {
 });
 
 test('only the actions that can mute declare a second state', () => {
-  // A second state is only worth having when the action can change it: the two mute
-  // buttons, and the Channel Volume dial, whose press now mutes the bound scope.
-  for (const action of manifest.Actions) {
-    const expected = action.UUID.startsWith('com.ulanzi.ulanzistudio.wavelink.mix-mute')
-      || action.UUID === 'com.ulanzi.ulanzistudio.wavelink.channel-mute'
-      || action.UUID === 'com.ulanzi.ulanzistudio.wavelink.channel-volume'
-      ? 2
-      : 1;
+  // A second state is only worth having when a press can change it. Every action whose
+  // press toggles a mute therefore needs one, dial or button: Channel Mute and Mix
+  // Mute, and the two volume dials, whose press mutes the bound scope.
+  //
+  // Mix Volume was left out of this list, and with a single state and an icon that
+  // never changed, its press muted the mix in complete silence. The test encoded the
+  // defect, so the rule is now stated by what a press does rather than by a list of
+  // action names that has to be updated by hand.
+  for (const mod of [...DIALS, ...MUTES]) {
     assert.equal(
-      action.States.length,
-      expected,
-      `${action.Name} declares ${expected} state(s)`
+      actionOf(mod.uuid).States.length,
+      2,
+      `${mod.uuid} can mute on a press, so it must declare a Muted and an Unmuted state`
+    );
+  }
+  for (const mod of BUTTONS) {
+    assert.equal(
+      actionOf(mod.uuid).States.length,
+      1,
+      `${mod.uuid} only nudges or connects, so a second state would never be reached`
     );
   }
 });
@@ -139,7 +147,7 @@ test('only the actions that can mute declare a second state', () => {
 test('the mute states follow STATE.MUTED and look different from each other', () => {
   // STATE.MUTED is 0, so "Muted" has to be the first state for the shared index to
   // point at the right image in every action.
-  for (const mod of [channelMute, mixMute, channelVolume]) {
+  for (const mod of [channelMute, mixMute, channelVolume, mixVolume]) {
     const [muted, unmuted] = actionOf(mod.uuid).States;
     assert.equal(muted.Name, 'Muted', `${mod.uuid} state ${STATE.MUTED} is Muted`);
     assert.equal(unmuted.Name, 'Unmuted', `${mod.uuid} state ${STATE.UNMUTED} is Unmuted`);
@@ -344,30 +352,28 @@ test('no icon carries a live level', () => {
   }
 });
 
-test('only the mute actions change icon, and only with the mute state', () => {
-  // They are the only ones with a second state declared in the manifest, so they are
-  // the only ones that can report a mute change visually.
-  for (const [mod, subject, other, muted] of [
-    [channelMute, channel({ isMuted: true }), mix(), STATE.MUTED],
-    [mixMute, channel(), mix({ isMuted: true }), STATE.MUTED],
+test('every action that can mute shows it, and the others stay put', () => {
+  // Mix Volume used to sit with the single-state actions despite toggling a mute,
+  // which left its press silent on the deck. Note that DEFAULT and MUTED are both 0,
+  // so a test that only ever checked "state 0" could not have told the two apart.
+  //
+  // Whatever the action is bound to, the mute it can toggle has to reach the key.
+  for (const [mod, mutedCtx, unmutedCtx] of [
+    [channelMute, { channel: channel({ isMuted: true }) }, { channel: channel() }],
+    [mixMute, { mix: mix({ isMuted: true }) }, { mix: mix() }],
+    [channelVolume, { channel: channel({ isMuted: true }) }, { channel: channel() }],
+    [mixVolume, { mix: mix({ isMuted: true }) }, { mix: mix() }],
   ]) {
-    const on = draw(mod, { channel: subject, mix: other }).find((c) => c[0] === 'state');
-    assert.equal(on[1], muted, `${mod.uuid} shows the muted icon`);
-    const off = draw(mod, {
-      channel: { ...subject, isMuted: false },
-      mix: { ...other, isMuted: false },
-    }).find((c) => c[0] === 'state');
+    const on = draw(mod, mutedCtx).find((c) => c[0] === 'state');
+    assert.equal(on[1], STATE.MUTED, `${mod.uuid} shows the muted icon`);
+    const off = draw(mod, unmutedCtx).find((c) => c[0] === 'state');
     assert.equal(off[1], STATE.UNMUTED, `${mod.uuid} and the unmuted one`);
   }
 
-  for (const [mod, subject, other] of [
-    [channelVolume, channel({ isMuted: true }), mix()],
-    [mixVolume, channel(), mix({ isMuted: true })],
-    [channelVolumeUp, channel({ isMuted: true }), mix()],
-    [channelVolumeDown, channel({ isMuted: true }), mix()],
-  ]) {
-    const on = draw(mod, { channel: subject, mix: other }).find((c) => c[0] === 'state');
-    assert.equal(on[1], STATE.DEFAULT, `${mod.uuid} declares one state and stays on it`);
+  for (const mod of [channelVolumeUp, channelVolumeDown, connect]) {
+    const drawn = draw(mod, { channel: channel({ isMuted: true }), mix: mix({ isMuted: true }) })
+      .find((c) => c[0] === 'state');
+    assert.equal(drawn[1], STATE.DEFAULT, `${mod.uuid} declares one state and stays on it`);
   }
 });
 
@@ -636,25 +642,30 @@ test('an encoder draws its icon from the feedback layout, and the paths exist', 
   }
 });
 
-test('the dial follows the mute with its own icon', () => {
-  const context = 'ctx-dial-icon';
-  const paint = (isMuted) => {
-    const $UD = fakeUD();
-    channelVolume.render({
-      $UD,
-      context,
-      snap: {},
-      isEncoder: true,
-      settings: { mixId: '' },
-      channel: channel({ isMuted }),
-      mix: mix(),
-    });
-    return $UD.sent.filter((c) => c[0] === 'feedback').length;
-  };
-  assert.equal(paint(false), 1, 'the dial is drawn with the unmuted icon');
-  assert.equal(paint(false), 0, 'and not redrawn for nothing');
-  assert.equal(paint(true), 1, 'muting redraws it, icon included');
-  assert.equal(paint(true), 0);
+test('each dial follows the mute with its own icon', () => {
+  // Both volume dials toggle a mute when pressed, so both have to show it. The Mix
+  // Volume dial declared a single state and always drew the same icon, so its press
+  // muted the mix with nothing at all on the deck to say that it had.
+  const cases = [
+    [channelVolume, (isMuted) => ({ settings: { mixId: '' }, channel: channel({ isMuted }) })],
+    [mixVolume, (isMuted) => ({ settings: { mixId: '' }, mix: mix({ isMuted }) })],
+  ];
+
+  for (const [mod, contextFor] of cases) {
+    // A context of its own, because the encoder cache is keyed by context and is
+    // shared between the two dials.
+    const context = `ctx-dial-icon-${mod.uuid.split('.').pop()}`;
+    const paint = (isMuted) => {
+      const $UD = fakeUD();
+      mod.render({ $UD, context, snap: {}, isEncoder: true, ...contextFor(isMuted) });
+      return $UD.sent.filter((c) => c[0] === 'feedback').length;
+    };
+
+    assert.equal(paint(false), 1, `${mod.uuid} draws the dial with the unmuted icon`);
+    assert.equal(paint(false), 0, `${mod.uuid} does not redraw it for nothing`);
+    assert.equal(paint(true), 1, `${mod.uuid} redraws it when the mute changes`);
+    assert.equal(paint(true), 0, `${mod.uuid} and settles again`);
+  }
 });
 
 test('every action uuid is the manifest uuid plus its short name', () => {
