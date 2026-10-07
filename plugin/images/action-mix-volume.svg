@@ -1,0 +1,10 @@
+<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+  <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
+  <!-- Vertical fader track -->
+  <rect x="33" y="16" width="6" height="40" rx="3" fill="#333"/>
+  <!-- Fader knob in middle -->
+  <circle cx="36" cy="36" r="10" fill="#1fe08a" stroke="#17c07a" stroke-width="2"/>
+  <rect x="33" y="32" width="6" height="8" rx="2" fill="#17c07a"/>
+  <!-- MIX label -->
+  <text x="36" y="62" text-anchor="middle" font-size="10" font-weight="bold" fill="#1fe08a">MIX</text>
+</svg>

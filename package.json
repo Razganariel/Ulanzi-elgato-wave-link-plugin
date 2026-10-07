@@ -1,0 +1,19 @@
+{
+  "name": "ulanzi-wavelink-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Build tooling for the Ulanzi D200X Elgato Wave Link plugin",
+  "scripts": {
+    "sdk": "node scripts/install-sdk.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.js",
+    "release": "npm run sdk && npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}

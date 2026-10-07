@@ -1,0 +1,7 @@
+<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+  <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
+  <path d="M18 36 L30 36 M42 36 L54 36" stroke="#ff7a1a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M30 24 L30 48 M42 24 L42 48" stroke="#ff7a1a" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="36" cy="36" r="14" stroke="#ff7a1a" stroke-width="2" fill="none"/>
+  <text x="36" y="62" text-anchor="middle" font-size="10" fill="#888">WAVELINK</text>
+</svg>

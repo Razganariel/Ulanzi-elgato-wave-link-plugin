@@ -1,0 +1,176 @@
+{
+  "Author": "Ulanzi-WaveLink-plugin",
+  "Name": "Elgato Wave Link Control",
+  "Description": "Control Elgato Wave Link audio channels and mixes from an Ulanzi D200X. Each key is bound to a channel or mix.",
+  "Icon": "images/plugin.svg",
+  "Version": "0.1.0",
+  "Category": "Audio",
+  "CodePath": "service/app.js",
+  "Type": "JavaScript",
+  "PrivateAPI": true,
+  "Inspect": "--inspect=127.0.0.1:9213",
+  "UUID": "com.ulanzi.ulanzistudio.wavelink",
+  "Actions": [
+    {
+      "Name": "Channel Mute",
+      "Icon": "images/action-channel-mute.svg",
+      "PropertyInspectorPath": "property-inspector/channel-mute/inspector.html",
+      "Tooltip": "Mute a Wave Link channel, or only its junction in the selected mix",
+      "UUID": "com.ulanzi.ulanzistudio.wavelink.channel-mute",
+      "SupportedInMultiActions": false,
+      "Controllers": [
+        "Keypad"
+      ],
+      "Devices": [
+        "D200X"
+      ],
+      "States": [
+        {
+          "Name": "Muted",
+          "Image": "images/action-channel-mute.svg"
+        },
+        {
+          "Name": "Unmuted",
+          "Image": "images/action-channel-unmute.svg"
+        }
+      ]
+    },
+    {
+      "Name": "Channel Volume",
+      "Icon": "images/action-channel-volume-muted.svg",
+      "PropertyInspectorPath": "property-inspector/channel-volume/inspector.html",
+      "Tooltip": "Dial: rotate to adjust the channel level, press to toggle its mute. A selected mix scopes both to that junction",
+      "UUID": "com.ulanzi.ulanzistudio.wavelink.channel-volume",
+      "SupportedInMultiActions": false,
+      "Controllers": [
+        "Encoder"
+      ],
+      "Devices": [],
+      "Encoder": {
+        "layout": "$UA1"
+      },
+      "States": [
+        {
+          "Name": "Muted",
+          "Image": "images/action-channel-volume-muted.svg"
+        },
+        {
+          "Name": "Unmuted",
+          "Image": "images/action-channel-volume.svg"
+        }
+      ]
+    },
+    {
+      "Name": "Channel Volume Up",
+      "Icon": "images/action-channel-volume-up.svg",
+      "PropertyInspectorPath": "property-inspector/channel-volume-up/inspector.html",
+      "Tooltip": "Each press increases channel volume by one step",
+      "UUID": "com.ulanzi.ulanzistudio.wavelink.channel-volume-up",
+      "SupportedInMultiActions": false,
+      "Controllers": [
+        "Keypad"
+      ],
+      "Devices": [],
+      "States": [
+        {
+          "Name": "Volume Up",
+          "Image": "images/action-channel-volume-up.svg"
+        }
+      ]
+    },
+    {
+      "Name": "Channel Volume Down",
+      "Icon": "images/action-channel-volume-down.svg",
+      "PropertyInspectorPath": "property-inspector/channel-volume-down/inspector.html",
+      "Tooltip": "Each press decreases channel volume by one step",
+      "UUID": "com.ulanzi.ulanzistudio.wavelink.channel-volume-down",
+      "SupportedInMultiActions": false,
+      "Controllers": [
+        "Keypad"
+      ],
+      "Devices": [],
+      "States": [
+        {
+          "Name": "Volume Down",
+          "Image": "images/action-channel-volume-down.svg"
+        }
+      ]
+    },
+    {
+      "Name": "Mix Volume",
+      "Icon": "images/action-mix-volume.svg",
+      "PropertyInspectorPath": "property-inspector/mix-volume/inspector.html",
+      "Tooltip": "Dial: rotate to adjust mix volume, press to toggle mix mute",
+      "UUID": "com.ulanzi.ulanzistudio.wavelink.mix-volume",
+      "SupportedInMultiActions": false,
+      "Controllers": [
+        "Encoder"
+      ],
+      "Devices": [],
+      "Encoder": {
+        "layout": "$UA1"
+      },
+      "States": [
+        {
+          "Name": "Mix Volume",
+          "Image": "images/action-mix-volume.svg"
+        }
+      ]
+    },
+    {
+      "Name": "Mix Mute",
+      "Icon": "images/action-mix-mute.svg",
+      "PropertyInspectorPath": "property-inspector/mix-mute/inspector.html",
+      "Tooltip": "Toggle mute for a Wave Link mix (Stream Mix / Monitor Mix)",
+      "UUID": "com.ulanzi.ulanzistudio.wavelink.mix-mute",
+      "SupportedInMultiActions": false,
+      "Controllers": [
+        "Keypad"
+      ],
+      "Devices": [
+        "D200X"
+      ],
+      "States": [
+        {
+          "Name": "Muted",
+          "Image": "images/action-mix-mute.svg"
+        },
+        {
+          "Name": "Unmuted",
+          "Image": "images/action-mix-unmute.svg"
+        }
+      ]
+    },
+    {
+      "Name": "Connect",
+      "Icon": "images/action-connect.svg",
+      "PropertyInspectorPath": "property-inspector/connect/inspector.html",
+      "Tooltip": "Connect to Wave Link and refresh channel/mix list",
+      "UUID": "com.ulanzi.ulanzistudio.wavelink.connect",
+      "SupportedInMultiActions": false,
+      "Controllers": [
+        "Keypad"
+      ],
+      "Devices": [],
+      "States": [
+        {
+          "Name": "Connect",
+          "Image": "images/action-connect.svg"
+        }
+      ]
+    }
+  ],
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "10.15"
+    }
+  ],
+  "Software": {
+    "MinVersion": "3.0.11"
+  }
+}

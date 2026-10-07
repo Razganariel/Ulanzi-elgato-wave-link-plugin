@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mix Mute Settings</title>
+  <link rel="stylesheet" href="../../libs/css/uspi.css" />
+  <link rel="stylesheet" href="../shared.css" />
+</head>
+<body data-actionid="com.ulanzi.ulanzistudio.wavelink.mix-mute">
+  <div class="uspi-wrapper">
+  <form id="property-inspector">
+  <h1>Mix Mute</h1>
+  <p class="sub">Toggle mute for a Wave Link mix (Stream Mix / Monitor Mix)</p>
+
+  <section>
+    <legend>Mix</legend>
+    <label>
+      <span>Mix</span>
+      <select id="mix" name="mixId"></select>
+    </label>
+    <label>
+      <span>Behaviour on press</span>
+      <select name="behaviour">
+        <option value="toggle">Toggle</option>
+        <option value="mute">Mute</option>
+        <option value="unmute">Unmute</option>
+      </select>
+    </label>
+  </section>
+
+
+  <section>
+    <legend>Status</legend>
+    <div class="status" id="conn-status">
+      <span class="dot"></span>
+      <span class="label">Disconnected</span>
+    </div>
+  </section>
+
+  </form>
+  </div>
+  <script src="../../libs/js/constants.js"></script>
+  <script src="../../libs/js/eventEmitter.js"></script>
+  <script src="../../libs/js/timers.js"></script>
+  <script src="../../libs/js/utils.js"></script>
+  <script src="../../libs/js/ulanziApi.js"></script>
+  <script src="../shared.js?v=4"></script>
+  <script src="inspector.js"></script>
+</body>
+</html>

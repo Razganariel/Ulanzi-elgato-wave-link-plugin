@@ -1,0 +1,10 @@
+<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+  <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
+  <!-- Vertical fader track -->
+  <rect x="33" y="16" width="6" height="40" rx="3" fill="#333"/>
+  <!-- Fader knob -->
+  <circle cx="36" cy="36" r="10" fill="#ff7a1a" stroke="#e66b1a" stroke-width="2"/>
+  <rect x="33" y="32" width="6" height="8" rx="2" fill="#e66b1a"/>
+  <!-- Channel label -->
+  <text x="36" y="62" text-anchor="middle" font-size="8" fill="#888">CH VOL</text>
+</svg>
