@@ -48,7 +48,10 @@ export class WaveLinkRegistry extends EventEmitter {
     });
 
     client.on('error', (err) => {
-      this.emit('error', err);
+      // Same hazard one hop further along: emitting 'error' on an EventEmitter that
+      // has no listener throws. The service attaches one at startup, so in production
+      // this always forwards.
+      if (this.listenerCount('error') > 0) this.emit('error', err);
     });
 
     client.on('channelsChanged', (channels) => {
@@ -80,7 +83,19 @@ export class WaveLinkRegistry extends EventEmitter {
     if (this._connecting || this._client.connected) return;
     this._connecting = true;
     this.bind();
-    await this._client.connect();
+    try {
+      await this._client.connect();
+    } catch (err) {
+      // The guard above must not stay armed after a failure. It used to, and every
+      // later call then returned as if it had succeeded without ever reaching Wave
+      // Link -- the Connect action on the deck and the button in the property
+      // inspector both went permanently inert, silently, after one failed attempt.
+      // Only the client's own 'connected' event cleared the flag, and that arrives
+      // solely if the client reconnects by itself, which it stops attempting once
+      // its last delay is spent. So a failure is what releases the guard.
+      this._connecting = false;
+      throw err;
+    }
   }
 
   disconnect() {

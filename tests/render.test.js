@@ -489,6 +489,19 @@ test('pruning never forgets a context that is still live', () => {
   assert.equal(paint(), 0, 'the live key keeps its remembered label');
 });
 
+test('the service reports an unhandled rejection as such', () => {
+  // Node raises an unhandled rejection as an uncaught exception, so without this
+  // handler the two are the same line in the log. A stray promise then reads as a
+  // crash of the plugin rather than as the stray promise it is, which sends the
+  // reader hunting for a bug that does not exist.
+  //
+  // The service connects to the host the moment it is imported, so it cannot be
+  // loaded here; its process-level wiring is asserted on the source, as elsewhere.
+  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+  assert.match(service, /process\.on\('unhandledRejection'/, 'the service must handle rejections');
+  assert.match(service, /process\.on\('uncaughtException'/, 'and keep handling exceptions');
+});
+
 test('selecting a key must not rewrite the encoder layout', () => {
   // Selecting a key in Ulanzi Studio fires setActive and then paramfromapp, and the
   // host replays the stored settings with it. Clearing the icon cache on either one

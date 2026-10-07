@@ -62,7 +62,99 @@ function fixture({ channels = [], mixes = [] } = {}) {
   return { client, registry: new WaveLinkRegistry(client) };
 }
 
+/** A transport that refuses until it is told otherwise, like a Wave Link that is not running. */
+class FailingClient extends FakeClient {
+  constructor() {
+    super();
+    this.failing = true;
+  }
+
+  async connect() {
+    this.connectCalls++;
+    if (this.failing) throw new Error('Wave Link absent');
+    this.connected = true;
+    this.emit('connected');
+  }
+}
+
 const channel = (over = {}) => ({ id: 'ch1', name: 'Mic 1', level: 0.5, isMuted: false, mixes: [], ...over });
+
+test('a failed connection does not lock out the next attempt', async () => {
+  // The Connect action on the deck and the button in the property inspector both go
+  // through connect(). If a failed attempt leaves the in-flight guard armed, every
+  // later call returns as if it had connected, without reaching Wave Link at all:
+  // the button looks alive and does nothing, forever, with nothing in the log.
+  const client = new FailingClient();
+  const registry = new WaveLinkRegistry(client);
+
+  await assert.rejects(registry.connect(), /Wave Link absent/);
+  assert.equal(registry.snapshot().connecting, false, 'a failure must not look like a connection in progress');
+
+  // Wave Link comes up, and the user presses Connect.
+  client.failing = false;
+  await registry.connect();
+  assert.equal(client.connectCalls, 2, 'the second attempt must actually reach Wave Link');
+  assert.equal(registry.isConnected(), true);
+});
+
+test('connect can be retried while Wave Link stays down, and reports each failure', async () => {
+  const client = new FailingClient();
+  const registry = new WaveLinkRegistry(client);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await assert.rejects(registry.connect(), /Wave Link absent/, `attempt ${attempt} must surface its error`);
+  }
+  assert.equal(client.connectCalls, 3, 'each press must reach Wave Link');
+
+  client.failing = false;
+  await registry.connect();
+  assert.equal(registry.isConnected(), true, 'and a later press must still connect');
+  assert.equal(client.connectCalls, 4);
+});
+
+test('connect refuses to run twice at the same time', async () => {
+  // Removing the guard is not the fix: two overlapping attempts would open two
+  // sockets and duplicate every subscription. Only a failure has to release it.
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const client = new FakeClient();
+  client.connect = async () => {
+    client.connectCalls++;
+    await gate;
+    client.connected = true;
+    client.emit('connected');
+  };
+  const registry = new WaveLinkRegistry(client);
+
+  const inFlight = registry.connect();
+  const second = registry.connect();
+  release();
+  await Promise.all([inFlight, second]);
+
+  assert.equal(client.connectCalls, 1, 'the second call must be dropped while the first is in flight');
+  assert.equal(registry.snapshot().connecting, false, 'and the guard must be released once it settles');
+});
+
+test('a client error is relayed, and a registry nobody watches survives it', () => {
+  // Same hazard one hop further along: the registry re-emits 'error' on itself, and
+  // EventEmitter throws when 'error' has no listener. The service attaches one at
+  // startup, so forwarding is what production does and must keep doing.
+  const { client, registry } = fixture();
+  const seen = [];
+  registry.on('error', (err) => seen.push(err.message));
+  registry.bind();
+  client.emit('error', new Error('ECONNREFUSED'));
+  assert.deepEqual(seen, ['ECONNREFUSED'], 'a watched registry must still forward');
+
+  const other = fixture();
+  other.registry.bind();
+  assert.doesNotThrow(
+    () => other.client.emit('error', new Error('ECONNREFUSED')),
+    'an unwatched registry must not take the service down either'
+  );
+});
 
 test('start connects once and never twice', async () => {
   const { client, registry } = fixture();

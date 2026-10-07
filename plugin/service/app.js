@@ -503,6 +503,13 @@ process.on('uncaughtException', (err) => {
   log(`uncaught: ${err && err.stack ? err.stack : err}`, 'error');
 });
 
+// Node raises an unhandled rejection as an uncaught exception, so without this the
+// two would be indistinguishable in the log: a stray promise would be filed as a
+// crash and send the reader looking for a bug that is not there.
+process.on('unhandledRejection', (reason) => {
+  log(`unhandled rejection: ${(reason && reason.message) || reason}`, 'error');
+});
+
 process.on('SIGINT', () => {
   waveLinkRegistry.disconnect();
   process.exit(0);
