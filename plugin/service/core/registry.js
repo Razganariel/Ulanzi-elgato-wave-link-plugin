@@ -28,47 +28,65 @@ export class WaveLinkRegistry extends EventEmitter {
     super();
     this._client = client;
     this._bound = false;
+    this._handlers = new Map();
     this._connecting = false;
     this._started = false;
   }
 
+  /**
+   * Subscribes to the transport, and remembers the subscriptions.
+   *
+   * The handlers are held rather than written inline because `disconnect()` has to be
+   * able to undo them. Clearing `_bound` alone used to look like it did: the client
+   * went on carrying a full set of listeners, so the next `connect()` bound a second
+   * one on top and every event arrived twice. The repaint path hides that -- the
+   * pending contexts live in a Set behind a debounce, so a duplicate refresh collapses
+   * into the one that was already queued. What does not collapse is the client itself:
+   * seven listeners per cycle, for as many cycles as the session went through, and
+   * duplicated lines in the log for the three events that are not deduplicated.
+   */
   bind() {
     if (this._bound) return;
     this._bound = true;
 
     const client = this._client;
 
-    client.on('connected', () => {
-      this._connecting = false;
-      this.emit('connected');
-    });
+    this._handlers = new Map([
+      ['connected', () => {
+        this._connecting = false;
+        this.emit('connected');
+      }],
+      ['disconnected', () => {
+        this.emit('disconnected');
+      }],
+      ['error', (err) => {
+        // Same hazard one hop further along: emitting 'error' on an EventEmitter that
+        // has no listener throws. The service attaches one at startup, so in production
+        // this always forwards.
+        if (this.listenerCount('error') > 0) this.emit('error', err);
+      }],
+      ['channelsChanged', (channels) => {
+        this.emit('channelsChanged', channels);
+      }],
+      ['channelChanged', (params) => {
+        this.emit('channelChanged', params);
+      }],
+      ['mixesChanged', (mixes) => {
+        this.emit('mixesChanged', mixes);
+      }],
+      ['mixChanged', (params) => {
+        this.emit('mixChanged', params);
+      }],
+    ]);
 
-    client.on('disconnected', () => {
-      this.emit('disconnected');
-    });
+    for (const [event, handler] of this._handlers) client.on(event, handler);
+  }
 
-    client.on('error', (err) => {
-      // Same hazard one hop further along: emitting 'error' on an EventEmitter that
-      // has no listener throws. The service attaches one at startup, so in production
-      // this always forwards.
-      if (this.listenerCount('error') > 0) this.emit('error', err);
-    });
-
-    client.on('channelsChanged', (channels) => {
-      this.emit('channelsChanged', channels);
-    });
-
-    client.on('channelChanged', (params) => {
-      this.emit('channelChanged', params);
-    });
-
-    client.on('mixesChanged', (mixes) => {
-      this.emit('mixesChanged', mixes);
-    });
-
-    client.on('mixChanged', (params) => {
-      this.emit('mixChanged', params);
-    });
+  /** Removes every listener this registry added to the transport. */
+  unbind() {
+    for (const [event, handler] of this._handlers) this._client.off(event, handler);
+    this._handlers = new Map();
+    this._bound = false;
   }
 
   /** Start the connection (call once at service startup) */
@@ -100,7 +118,11 @@ export class WaveLinkRegistry extends EventEmitter {
 
   disconnect() {
     this._client.disconnect();
-    this._bound = false;
+    // Releasing the flag was never enough on its own: the transport kept the listeners
+    // this registry had added, so the next connect() bound a second set over the first
+    // and every event arrived twice, seven more listeners per cycle. unbind() is what
+    // actually undoes the subscription.
+    this.unbind();
     this._connecting = false;
     this._started = false;
   }

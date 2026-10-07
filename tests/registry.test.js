@@ -156,6 +156,63 @@ test('a client error is relayed, and a registry nobody watches survives it', () 
   );
 });
 
+test('disconnect really releases the transport, not just the flag', async () => {
+  // Clearing `_bound` looked like it undid the subscription, and it did not: the
+  // transport kept all seven listeners, so the next connect() bound a second set over
+  // the first. The repaint path hides the duplicates -- pending contexts sit in a Set
+  // behind a debounce -- but the listener count grows by seven every cycle, and the
+  // three events that are not deduplicated print twice in the log.
+  const { client, registry } = fixture();
+  const seen = [];
+  for (const event of ['connected', 'disconnected', 'channelChanged', 'mixChanged']) {
+    registry.on(event, () => seen.push(event));
+  }
+
+  await registry.start();
+  const bound = client.eventNames().length;
+  assert.equal(bound, 7, 'binding attaches one listener per event');
+
+  for (let cycle = 0; cycle < 5; cycle += 1) {
+    registry.disconnect();
+    await registry.start();
+  }
+  assert.equal(
+    client.eventNames().length,
+    bound,
+    'five disconnect/start cycles must leave the transport with exactly one set'
+  );
+
+  seen.length = 0;
+  client.emit('channelChanged', { id: 'ch1' });
+  assert.deepEqual(seen, ['channelChanged'], 'and an event must be forwarded exactly once');
+});
+
+test('a disconnected registry keeps nothing and says nothing more', () => {
+  const { client, registry } = fixture();
+  const seen = [];
+  registry.on('connected', () => seen.push('connected'));
+  registry.on('disconnected', () => seen.push('disconnected'));
+  registry.bind();
+  registry.disconnect();
+
+  // Telling the transport to close makes it report back, and that one is honest:
+  // the registry did go down. Anything after it is not, because it has let go.
+  assert.deepEqual(seen, ['disconnected'], 'its own disconnection is reported exactly once');
+
+  client.emit('connected');
+  client.emit('disconnected');
+  assert.deepEqual(seen, ['disconnected'], 'and nothing is forwarded afterwards');
+  assert.equal(client.eventNames().length, 0, 'with no listener left on the transport');
+});
+
+test('bind is idempotent while it is in force', async () => {
+  const { client, registry } = fixture();
+  registry.bind();
+  registry.bind();
+  registry.bind();
+  assert.equal(client.eventNames().length, 7, 'binding twice must not double the listeners');
+});
+
 test('start connects once and never twice', async () => {
   const { client, registry } = fixture();
   await registry.start();
