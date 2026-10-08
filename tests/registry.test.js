@@ -374,6 +374,129 @@ test('setMixMute sends an explicit mute flag', async () => {
   assert.deepEqual(client.calls[0], ['setMix', 'mix1', { isMuted: true }]);
 });
 
+test('consecutive toggles alternate, because nothing else can report the change in time', async () => {
+  // Wave Link answers a setChannel with a notification, and that round trip has not
+  // completed when the next press lands. The fake transport never notifies, which is
+  // exactly that situation: pressed twice, and the second time the cache still said
+  // unmuted, so the same value was asked for again and the second press vanished.
+  const { client, registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [{ id: 'mix1', level: 0.5, isMuted: false }] }],
+    mixes: [{ id: 'mix1', name: 'Stream Mix', level: 1, isMuted: false }],
+  });
+
+  await registry.toggleChannelMute('ch1');
+  await registry.toggleChannelMute('ch1');
+  await registry.toggleChannelMute('ch1');
+  assert.deepEqual(
+    client.calls.map((c) => c[2].isMuted),
+    [true, false, true],
+    'three presses must mute, unmute, mute'
+  );
+
+  const junction = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [{ id: 'mix1', level: 0.5, isMuted: false }] }],
+  });
+  await junction.registry.toggleChannelMute('ch1', 'mix1');
+  await junction.registry.toggleChannelMute('ch1', 'mix1');
+  assert.deepEqual(
+    junction.client.calls.map((c) => c[2].mixes[0].isMuted),
+    [true, false],
+    'and the same for a junction'
+  );
+
+  const mix = fixture({ mixes: [{ id: 'mix1', name: 'Stream Mix', level: 1, isMuted: false }] });
+  await mix.registry.toggleMixMute('mix1');
+  await mix.registry.toggleMixMute('mix1');
+  assert.deepEqual(
+    mix.client.calls.map((c) => c[2].isMuted),
+    [true, false],
+    'and for a mix'
+  );
+});
+
+test('a refused toggle is never shown as applied', async () => {
+  // The optimistic write is a claim made before the answer arrives. If the request
+  // fails, that claim has to be withdrawn, or the key and the dial sit on a mute that
+  // did not happen until some unrelated notification corrects them.
+  const { client, registry } = fixture({ channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }] });
+  client.setChannel = async () => {
+    throw new Error('Wave Link refused');
+  };
+
+  await assert.rejects(registry.toggleChannelMute('ch1'), /refused/);
+  assert.equal(registry.channelMuted('ch1'), false, 'the cache must not keep a mute that failed');
+});
+
+test('a refused junction toggle leaves no junction behind', async () => {
+  const { client, registry } = fixture({ channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }] });
+  client.setChannel = async () => {
+    throw new Error('Wave Link refused');
+  };
+
+  await assert.rejects(registry.toggleChannelMute('ch1', 'mix1'), /refused/);
+  assert.equal(
+    registry.getChannel('ch1').mixes.length,
+    0,
+    'the junction was only created to hold the optimistic value, so it goes away with it'
+  );
+});
+
+test('consecutive steps accumulate instead of restarting from the same level', async () => {
+  // Measured before the fix: four rotations of +0.05 from 0.50 sent 0.55 four times,
+  // so three steps in four were absorbed. Every rotation that outran the notification
+  // was computed from the same starting level, and rotating a dial is the most
+  // repeated action the plugin performs.
+  for (const [label, run] of [
+    ['channel', async (registry, client) => {
+      for (let i = 0; i < 4; i += 1) await registry.stepChannelVolume('ch1', 0.05);
+    }],
+    ['junction', async (registry) => {
+      for (let i = 0; i < 4; i += 1) await registry.stepChannelVolume('ch1', 0.05, 'mix1');
+    }],
+    ['mix', async (registry) => {
+      for (let i = 0; i < 4; i += 1) await registry.stepMixVolume('mix1', 0.05);
+    }],
+  ]) {
+    const { client, registry } = fixture({
+      channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [{ id: 'mix1', level: 0.5, isMuted: false }] }],
+      mixes: [{ id: 'mix1', name: 'Stream Mix', level: 0.5, isMuted: false }],
+    });
+    await run(registry, client);
+    const levels = client.calls.map((c) => c[2].level ?? c[2].mixes[0].level);
+    assert.deepEqual(levels, [0.55, 0.6, 0.65, 0.7], `four ${label} steps must not restart`);
+  }
+});
+
+test('a refused step is not shown as applied', async () => {
+  const { client, registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }],
+  });
+  client.setChannel = async () => {
+    throw new Error('Wave Link refused');
+  };
+  await assert.rejects(registry.stepChannelVolume('ch1', 0.05), /refused/);
+  assert.equal(registry.getChannel('ch1').level, 0.5, 'the cache must keep the level that is really there');
+});
+
+test('a junction the host never reported is tracked without touching the channel', async () => {
+  // The junction only exists in the cache because the request is about to create it.
+  // It has to be that request's own target: muting a junction must never fall back to
+  // the channel, because the two scopes are independent and a user who caps a mix
+  // does not expect the channel itself to go quiet.
+  const { client, registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }],
+  });
+  await registry.toggleChannelMute('ch1', 'mix1');
+
+  assert.deepEqual(client.calls[0], ['setChannel', 'ch1', { mixes: [{ id: 'mix1', isMuted: true }] }]);
+  assert.equal(registry.getChannel('ch1').isMuted, false, 'the channel itself must stay unmuted');
+  assert.deepEqual(
+    registry.getChannel('ch1').mixes,
+    [{ id: 'mix1', isMuted: true }],
+    'and the junction is readable straight away, before any notification'
+  );
+});
+
 test('toggleMixMute inverts the cached state and refuses an unknown mix', async () => {
   const { client, registry } = fixture({ mixes: [{ id: 'mix1', level: 1, isMuted: false }] });
   await registry.toggleMixMute('mix1');

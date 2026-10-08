@@ -19,6 +19,56 @@ function normaliseLevel(value) {
   return Math.round(Math.min(1, Math.max(0, n)) * 1e6) / 1e6;
 }
 
+/**
+ * Writes a field and hands back the undo, which also removes the field if it was not
+ * there before.
+ */
+function setOptimistically(target, key, value) {
+  const had = Object.hasOwn(target, key);
+  const previous = target[key];
+  target[key] = value;
+  return () => {
+    if (had) target[key] = previous;
+    else delete target[key];
+  };
+}
+
+/**
+ * Writes a field, sends, and puts the field back if the request is refused.
+ *
+ * `target` may be null, in which case the request is simply sent with nothing written
+ * first -- see junctionOf.
+ */
+async function optimistically(target, key, value, send) {
+  if (!target) return send();
+  const undo = setOptimistically(target, key, value);
+  try {
+    await send();
+  } catch (err) {
+    undo();
+    throw err;
+  }
+}
+
+/**
+ * The cache entry one scope of a channel lives in, or null when the host never
+ * reported that scope.
+ *
+ * Inventing the entry was tried and had to be undone. The merge in _updateChannel only
+ * overwrites the junctions a notification lists, so an entry invented here that the
+ * host never confirms stays in the cache for the rest of the session: the key sits on a
+ * mute or a level that never happened, with nothing to correct it. The property
+ * inspector offers every mix for every channel without filtering, so a user can bind a
+ * channel to a junction it does not belong to and reach it in two clicks.
+ *
+ * So a scope the host has not reported is sent for, and nothing is written first. Its
+ * own notification brings it into the cache truthfully, and from then on it reads back.
+ */
+function junctionOf(channel, mixId) {
+  if (!mixId) return channel;
+  return channel.mixes?.find((m) => m.id === mixId) || null;
+}
+
 export class WaveLinkRegistry extends EventEmitter {
   /**
    * @param {WaveLinkClient} [client] transport to drive. Defaults to the shared
@@ -158,14 +208,29 @@ export class WaveLinkRegistry extends EventEmitter {
    * every other mix alone. Without one it touches the whole channel. The two are
    * independent, so muting a junction never implies muting the channel and unmuting a
    * junction never implies unmuting the channel.
+   *
+   * The intended state is written to the cache before the request goes out. Wave Link
+   * answers with a notification, and that round trip has not finished when a second
+   * press arrives -- so two quick presses both read the state from before, both ask
+   * for the same value, and the second is absorbed in silence. Reading back what was
+   * asked for instead makes consecutive presses alternate, which is what a toggle is.
+   * A request that fails undoes the write, so a refused mute is never shown as done.
    */
   async toggleChannelMute(channelId, mixId = null) {
-    if (!this.getChannel(channelId)) throw new Error(`Channel ${channelId} not found`);
-    if (mixId) {
-      await this.setChannelMuteInMix(channelId, mixId, !this.channelMuted(channelId, mixId));
-    } else {
-      await this.setChannelMute(channelId, !this.channelMuted(channelId));
-    }
+    const channel = this.getChannel(channelId);
+    if (!channel) throw new Error(`Channel ${channelId} not found`);
+    const muted = !this.channelMuted(channelId, mixId);
+
+    const { entry, forget } = junctionOf(channel, mixId);
+    await optimistically(entry, 'isMuted', muted, () =>
+      (mixId ? this.setChannelMuteInMix(channelId, mixId, muted) : this.setChannelMute(channelId, muted))
+    );
+  }
+
+  /** The level of one scope of a channel, falling back to the channel's own. */
+  _scopeLevel(channel, mixId) {
+    if (!mixId) return channel.level;
+    return channel.mixes?.find((m) => m.id === mixId)?.level ?? channel.level;
   }
 
   async setChannelVolume(channelId, volume, mixId = null) {
@@ -197,24 +262,44 @@ export class WaveLinkRegistry extends EventEmitter {
     await this._client.setChannel(channelId, { mixes: [{ id: mixId, isMuted: muted }] });
   }
 
+  /**
+   * Moves a level by one step.
+   *
+   * The new level is written to the cache before the request goes out, for the same
+   * reason a toggle reads back what it asked for. Measured: four rotations of +0.05
+   * from 0.50 used to send 0.55 four times, so three steps in four were absorbed -- a
+   * notification lands between two presses now and then, and every rotation that
+   * outran it was measured from the same starting point. Rotating a dial is the most
+   * repeated action the plugin has, so this was the costly half of the problem.
+   */
   async stepChannelVolume(channelId, delta, mixId = null) {
     const channel = this.getChannel(channelId);
     if (!channel) throw new Error(`Channel ${channelId} not found`);
-    const current = mixId
-      ? (channel.mixes?.find((m) => m.id === mixId)?.level ?? channel.level)
-      : channel.level;
+    const current = this._scopeLevel(channel, mixId);
     const next = normaliseLevel(current + delta);
-    await this.setChannelVolume(channelId, next, mixId);
+
+    await optimistically(junctionOf(channel, mixId), 'level', next, () =>
+      this.setChannelVolume(channelId, next, mixId)
+    );
   }
 
   async setMixMute(mixId, muted) {
     await this._client.setMix(mixId, { isMuted: muted });
   }
 
+  /** Inverts a mix's own mute, with the same optimistic read-back as a channel. */
   async toggleMixMute(mixId) {
     const mix = this.getMix(mixId);
     if (!mix) throw new Error(`Mix ${mixId} not found`);
-    await this.setMixMute(mixId, !mix.isMuted);
+    const muted = !mix.isMuted;
+
+    const undo = setOptimistically(mix, 'isMuted', muted);
+    try {
+      await this.setMixMute(mixId, muted);
+    } catch (err) {
+      undo();
+      throw err;
+    }
   }
 
   async setMixVolume(mixId, volume) {
@@ -225,7 +310,14 @@ export class WaveLinkRegistry extends EventEmitter {
     const mix = this.getMix(mixId);
     if (!mix) throw new Error(`Mix ${mixId} not found`);
     const next = normaliseLevel(mix.level + delta);
-    await this.setMixVolume(mixId, next);
+
+    const undo = setOptimistically(mix, 'level', next);
+    try {
+      await this.setMixVolume(mixId, next);
+    } catch (err) {
+      undo();
+      throw err;
+    }
   }
 
   snapshot() {
