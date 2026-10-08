@@ -510,6 +510,27 @@ test('a junction the host never reported is asked for, but never invented', asyn
   );
 });
 
+test('a channel handed to an action is a copy, and stays serialisable', () => {
+  // app.js attaches the registry to a copy of the channel, because the action calls
+  // channel.registry.setChannelVolume(...). Two things depend on that copy. An action
+  // must not be able to corrupt the transport's own state, and a channel carrying a
+  // registry has to stay serialisable -- Wave Link's channels are full of base64 icons
+  // and the inspector payload is JSON.stringify'd whole, so a registry attached to the
+  // cached object would make that throw and take the panel down with a blank select.
+  //
+  // This asserts the shape of that copy. The other half -- that app.js really makes it
+  // -- is asserted on the source in render.test.js, because app.js connects to the host
+  // the moment it is imported and cannot be loaded here.
+  const channel = { id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] };
+  const registry = { marker: true };
+  const carried = { ...channel, registry };
+
+  assert.notEqual(carried, channel, 'it is a copy');
+  carried.level = 1;
+  assert.equal(channel.level, 0.5, 'writing to it leaves the cache alone');
+  assert.doesNotThrow(() => JSON.stringify(carried), 'and it can still be serialised');
+});
+
 test('a scope reads the same way everywhere it is asked about', () => {
   // The four action modules and the registry used to each carry their own copy of this,
   // and they drifted: an encoder showed the channel's mute while its press only touched

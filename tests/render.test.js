@@ -497,6 +497,54 @@ test('pruning never forgets a context that is still live', () => {
   assert.equal(paint(), 0, 'the live key keeps its remembered label');
 });
 
+test('the service carries none of the paths that were removed', () => {
+  // Each of these was reachable, written, and did nothing. They are listed so that
+  // nobody restores them: a reader who finds an unused handler assumes it is a feature
+  // someone is relying on.
+  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+
+  // A global-settings feature that read the host's own Config/global_settings.json --
+  // another program's internal file -- and then used none of it. Nothing ever called the
+  // save side, so nothing was ever written either.
+  for (const gone of ['globalSettings', 'setGlobalSettings', 'getGlobalSettings', 'onDidReceiveGlobalSettings']) {
+    assert.doesNotMatch(service, new RegExp(gone), `${gone} was a no-op feature`);
+  }
+
+  // Per-setting messages that no panel has ever sent. git confirms they never appeared
+  // in a property inspector: set-settings has always been the only write path, and it
+  // merges rather than replaces, which these two did not.
+  assert.doesNotMatch(service, /set-channel/, 'no panel sends it');
+  assert.doesNotMatch(service, /set-mix/, 'no panel sends it');
+
+  // handlerContext().connect was a second way to reach the registry that no action used;
+  // the Connect action calls registry.connect() itself.
+  assert.doesNotMatch(service, /connect: async/, 'ctx.connect had no caller');
+
+  // The transport handed out a defensive deep copy that nothing ever asked for, while
+  // the copy that does matter -- the one app.js makes before attaching a registry -- is
+  // asserted in the registry tests.
+  const transport = readFileSync(new URL('../plugin/service/core/wavelink.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(transport, /getState\(\)/, 'getState had no caller');
+});
+
+test('the bound channel is copied before the registry is attached to it', () => {
+  // app.js cannot be imported by a test -- it connects to the host on load -- so this is
+  // asserted on the source. It matters because the copy is the only thing standing
+  // between an action and the transport's own state: a registry on the cached object
+  // would also make JSON.stringify throw, which is how the inspector payload is built,
+  // and the panel would come up with a blank select and no error to trace it.
+  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+  for (const fn of ['boundChannel', 'boundMix']) {
+    const body = service.slice(service.indexOf(`function ${fn}(`));
+    const block = body.slice(0, body.indexOf('\n}'));
+    assert.match(
+      block,
+      /\.\.\.\w+, registry: waveLinkRegistry/,
+      `${fn} must return a copy carrying the registry, not the cached object`
+    );
+  }
+});
+
 test('the service reports an unhandled rejection as such', () => {
   // Node raises an unhandled rejection as an uncaught exception, so without this
   // handler the two are the same line in the log. A stray promise then reads as a

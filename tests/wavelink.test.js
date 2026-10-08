@@ -205,13 +205,6 @@ test('a missing list in a response yields an empty list, not undefined', async (
   assert.deepEqual(await channels, [], 'the inspector must not iterate undefined');
 });
 
-test('getState hands out a copy so a caller cannot corrupt the cache', () => {
-  const client = new WaveLinkClient();
-  client.lastState.channels = [{ id: 'ch1', level: 0.5 }];
-  const state = client.getState();
-  state.channels[0].level = 1;
-  assert.equal(client.getChannel('ch1').level, 0.5);
-});
 
 test('reconnection is retried indefinitely, not six times', async () => {
   // Six attempts spanning 68 seconds used to be the end of it. A plugin whose job is

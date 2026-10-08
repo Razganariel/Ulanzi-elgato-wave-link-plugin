@@ -37,17 +37,6 @@ function isEncoderContext(context, entry) {
   return encoderActions.has(entry?.action?.uuid || decodeContext(context).uuid);
 }
 
-const globalSettings = { channelId: '', mixId: '' };
-
-function saveGlobalSettings(settings) {
-  Object.assign(globalSettings, settings);
-  try {
-    $UD.setGlobalSettings({ ...globalSettings });
-  } catch (err) {
-    log(`cannot persist global settings: ${err.message}`, 'warn');
-  }
-}
-
 function log(msg, level = 'info') {
   try {
     $UD.logMessage(msg, level);
@@ -137,10 +126,6 @@ function handlerContext(context, isEncoder) {
     channels: snap.channels,
     mixes: snap.mixes,
     report: (err) => report(err, context),
-    connect: async () => {
-      await waveLinkRegistry.connect();
-      refresh(context);
-    },
   };
 }
 
@@ -270,18 +255,6 @@ waveLinkRegistry.on('mixChanged', () => {
   scheduleRefresh();
 });
 
-function readHostGlobalSettings() {
-  try {
-    const file = new URL('../../../Config/global_settings.json', import.meta.url);
-    const all = JSON.parse(readFileSync(file, 'utf8'));
-    return all?.[PLUGIN_UUID] || {};
-  } catch {
-    return {};
-  }
-}
-
-const persisted = readHostGlobalSettings();
-
 $UD.connect(PLUGIN_UUID);
 
 trace('SYS ', `trace file: ${tracePath || '(unavailable)'}`);
@@ -304,20 +277,12 @@ try {
 
 $UD.onConnected(() => {
   log('main service connected to UlanziStudio');
-  $UD.getGlobalSettings();
   // Auto-connect to Wave Link on startup
   waveLinkRegistry.start().catch((err) => log(`Wave Link auto-connect failed: ${err.message}`, 'warn'));
 });
 
 $UD.onClose(() => log('websocket closed', 'warn'));
 $UD.onError((err) => log(`websocket error: ${err}`, 'error'));
-
-$UD.onDidReceiveGlobalSettings((message) => {
-  trace('GLOB', message);
-  const settings = message?.settings || message?.payload || message || {};
-  if (settings.channelId) globalSettings.channelId = settings.channelId;
-  if (settings.mixId) globalSettings.mixId = settings.mixId;
-});
 
 $UD.onAdd((message) => {
   const context = message.context;
@@ -462,24 +427,6 @@ current.settings = { ...current.settings, ...(payload.settings || {}) };
     }
     if (payload.event === 'connect') {
       await waveLinkRegistry.connect();
-      refresh(context);
-      return;
-    }
-    if (payload.event === 'set-channel') {
-      const current = contexts.get(context);
-      if (current) {
-        current.settings = { ...current.settings, channelId: String(payload.channelId || '') };
-        $UD.setSettings(current.settings, context);
-      }
-      refresh(context);
-      return;
-    }
-    if (payload.event === 'set-mix') {
-      const current = contexts.get(context);
-      if (current) {
-        current.settings = { ...current.settings, mixId: String(payload.mixId || '') };
-        $UD.setSettings(current.settings, context);
-      }
       refresh(context);
       return;
     }

@@ -444,18 +444,6 @@ export class WaveLinkClient extends EventEmitter {
     this.connecting = false;
   }
 
-  getState() {
-    // Callers redraw keys from this snapshot, so they must not be able to reach
-    // back into the cache through a shared array or channel object.
-    return {
-      ...this.lastState,
-      channels: this.lastState.channels.map((c) => ({ ...c, mixes: (c.mixes || []).map((m) => ({ ...m })) })),
-      mixes: this.lastState.mixes.map((m) => ({ ...m })),
-      inputDevices: [...(this.lastState.inputDevices || [])],
-      outputDevices: [...(this.lastState.outputDevices || [])],
-    };
-  }
-
   getChannel(id) {
     return this.lastState.channels.find((c) => c.id === id) || null;
   }

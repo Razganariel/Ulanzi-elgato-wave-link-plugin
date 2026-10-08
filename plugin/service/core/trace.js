@@ -10,7 +10,7 @@
  * Everything is best effort: tracing must never break the service.
  */
 
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
