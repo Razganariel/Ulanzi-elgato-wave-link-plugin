@@ -12,7 +12,7 @@ import { PLUGIN_UUID, REPAINT_DELAY_MS } from './core/constants.js';
 import { waveLinkRegistry } from './core/registry.js';
 import { findByUuid } from './actions/index.js';
 import { decodeContext, ensureEntry, forget, forgetActionId } from './core/context.js';
-import { trace, tracePath } from './core/trace.js';
+import { trace, tracing } from './core/trace.js';
 import { forgetHostDisplay, pruneHostDisplay } from './core/ui.js';
 
 const $UD = new UlanziApi();
@@ -279,7 +279,14 @@ waveLinkRegistry.on('mixChanged', () => {
 
 $UD.connect(PLUGIN_UUID);
 
-trace('SYS ', `trace file: ${tracePath || '(unavailable)'}`);
+// Said with log() and not trace(): trace() writes nothing while the switch is off, so
+// this is the only way the state of tracing is visible at all in the host log.
+log(
+  tracing.on
+    ? `tracing on -> ${tracing.path || '(unavailable)'}`
+    : 'tracing off (set TRACING to true in service/core/trace.js)',
+  'info'
+);
 try {
   const ws = $UD.websocket;
   const onMessage = ws.onmessage;

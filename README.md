@@ -239,15 +239,54 @@ substitution ne s'appliquait à aucun fichier.
 ## 7. Débogage
 
 - Log hôte : `%APPDATA%\Ulanzi\UlanziDeck\logs\com.ulanzi.ulanzistudio.wavelink\`
-- Trace brute : `com.ulanzi.ulanzistudio.wavelink.trace.log`, dans le même dossier
-  (rotation 8 Mo, 2 générations). Contient chaque frame dans les deux sens, ce qui est
-  le seul moyen fiable de distinguer « l'hôte n'a rien envoyé » de « tout a
-  fonctionné ».
 - Inspecteur Node : `--inspect=127.0.0.1:9213` (voir `plugin/manifest.json`).
 - Logs client : préfixés `[WaveLink]`.
 
 Si une icône ne change pas après un build, videz le cache d'Ulanzi Studio ou retirez
 l'action du deck puis remettez-la.
+
+### Le traçage des frames : présent, éteint
+
+Ulanzi Studio ne conserve que les appels `logMessage` de niveau *erreur*. Un trace de
+niveau *info* est donc invisible : rien ne distingue « l'hôte n'a rien envoyé » de «
+tout a fonctionné ». `service/core/trace.js` écrit chaque frame WebSocket dans les deux
+sens, plus les lignes de service, dans un fichier à côté du log hôte.
+
+**Il est éteint par défaut**, sur une seule ligne :
+
+```js
+// plugin/service/core/trace.js
+export const TRACING = false;
+```
+
+Passée à `true`, il n'y a rien d'autre à changer : `trace()` redevient le point de
+passage unique et les douze appelants restent en place. Le service annonce son état au
+démarrage, dans le log hôte :
+
+```
+tracing off (set TRACING to true in service/core/trace.js)
+tracing on -> .../logs/com.ulanzi.ulanzistudio.wavelink.trace.log
+```
+
+**Pourquoi éteint.** L'hôte repousse des échos d'état plusieurs fois par seconde : une
+session de huit heures remplissait trois générations de 8 Mo, et la rotation coûte un
+`stat` et un `rename` par écriture — du travail synchrone sur la boucle d'événements,
+sur le chemin de chaque frame. Le fichier tourne à 8 Mo avec deux générations conservées.
+
+**Pourquoi conservé.** C'est l'outil qui a permis de diagnostiquer chaque problème de
+connexion rencontré ici : un port faux, une notification manquée, un payload qui n'arrive
+pas. Le garder éteint plutôt que supprimé, c'est garder l'instrument sans le bruit.
+
+C'est un interrupteur et non un appel commenté, pour une raison simple : le traçage est
+réparti sur douze appelants, dont deux sur le chemin de chaque frame — un sur la
+réception, un sur l'envoi. Commenter l'un laisserait les autres écrire : un fichier à
+moitié rempli, qui existe, qui tourne, et qui n'est pas toute la vérité. Le pire des
+deux mondes.
+
+> Une réserve honnête : même éteint, `trace()` est appelé sur chaque frame et s'en
+> retourne. Le coût résiduel est un test de booléen, négligeable — mais c'est bien un
+> appel qui subsiste, et non zéro travail.
+
 
 ### Le WebView met les scripts en cache
 

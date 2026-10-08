@@ -36,6 +36,7 @@ import { ACTION, ENCODER_ICON, STATE, VOLUME_STEPS } from '../plugin/service/cor
 import { volumeBounds } from '../plugin/service/core/params.js';
 import { forgetHostDisplay, pruneHostDisplay } from '../plugin/service/core/ui.js';
 import { jsCode } from './helpers.js';
+import { trace, tracing } from '../plugin/service/core/trace.js';
 
 const manifest = JSON.parse(readFileSync(new URL('../plugin/manifest.json', import.meta.url), 'utf8'));
 const actionOf = (uuid) => manifest.Actions.find((a) => a.UUID === uuid);
@@ -595,6 +596,39 @@ test('the bound channel is copied before the registry is attached to it', () => 
       `${fn} must return a copy carrying the registry, not the cached object`
     );
   }
+});
+
+test('tracing is switched off, and switching it on is one line', () => {
+  // Traced on, the host pushes state echoes several times a second and a session fills
+  // three 8 MB generations -- and rotation costs a stat and a rename per append. It is
+  // off by default and it stays in the tree, because it is the only reliable way to tell
+  // "the host never sent anything" from "everything worked".
+  //
+  // The test is about the mechanism, not the value: whoever re-enables it for a session
+  // must not have to touch a test.
+  const source = jsCode('service/core/trace.js');
+
+  assert.match(source, /export const TRACING = (?:true|false);/, 'the switch is one named constant');
+  assert.match(
+    source,
+    /if \(!TRACING \|\| !target\) return;/,
+    'and trace() consults it before doing anything'
+  );
+
+  // One switch, not thirteen commented-out call sites. Commenting a call would leave a
+  // half-written file: it exists, it rotates, and it is not the whole truth.
+  const service = jsCode('service/app.js');
+  assert.match(service, /import \{ trace, tracing \}/, 'the service reads the switch, not a bare path');
+  assert.doesNotMatch(service, /tracePath/, 'and never a path it could announce but not write');
+  assert.match(service, /tracing\.on/, 'the state of tracing is stated in the host log');
+});
+
+test('tracing writes nothing while it is off', () => {
+  assert.equal(typeof trace, 'function');
+  // Whatever the value of the switch, calling it must never throw: it sits on the path
+  // of every websocket frame, and an exception there would take the service down.
+  assert.doesNotThrow(() => trace('TEST', { hello: 'world' }));
+  assert.ok(tracing.path, 'it still knows where it would write, so the host log can say so');
 });
 
 test('the service reports an unhandled rejection as such', () => {
