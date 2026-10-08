@@ -51,7 +51,7 @@ export function dialStep(value, min, max, fallback, allowed = null) {
  * instead of producing a range that no step can satisfy.
  */
 export function volumeBounds(settings) {
-  const min = clampFloat(settings.min, LIMITS.VOLUME_MIN, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MIN);
-  const max = clampFloat(settings.max, min, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MAX);
+  const min = clampFloat(settings?.min, LIMITS.VOLUME_MIN, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MIN);
+  const max = clampFloat(settings?.max, min, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MAX);
   return { min, max };
 }

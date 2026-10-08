@@ -221,8 +221,7 @@ export class WaveLinkRegistry extends EventEmitter {
     if (!channel) throw new Error(`Channel ${channelId} not found`);
     const muted = !this.channelMuted(channelId, mixId);
 
-    const { entry, forget } = junctionOf(channel, mixId);
-    await optimistically(entry, 'isMuted', muted, () =>
+    await optimistically(junctionOf(channel, mixId), 'isMuted', muted, () =>
       (mixId ? this.setChannelMuteInMix(channelId, mixId, muted) : this.setChannelMute(channelId, muted))
     );
   }
@@ -293,13 +292,7 @@ export class WaveLinkRegistry extends EventEmitter {
     if (!mix) throw new Error(`Mix ${mixId} not found`);
     const muted = !mix.isMuted;
 
-    const undo = setOptimistically(mix, 'isMuted', muted);
-    try {
-      await this.setMixMute(mixId, muted);
-    } catch (err) {
-      undo();
-      throw err;
-    }
+    await optimistically(mix, 'isMuted', muted, () => this.setMixMute(mixId, muted));
   }
 
   async setMixVolume(mixId, volume) {
@@ -311,13 +304,7 @@ export class WaveLinkRegistry extends EventEmitter {
     if (!mix) throw new Error(`Mix ${mixId} not found`);
     const next = normaliseLevel(mix.level + delta);
 
-    const undo = setOptimistically(mix, 'level', next);
-    try {
-      await this.setMixVolume(mixId, next);
-    } catch (err) {
-      undo();
-      throw err;
-    }
+    await optimistically(mix, 'level', next, () => this.setMixVolume(mixId, next));
   }
 
   snapshot() {

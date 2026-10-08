@@ -478,22 +478,34 @@ test('a refused step is not shown as applied', async () => {
   assert.equal(registry.getChannel('ch1').level, 0.5, 'the cache must keep the level that is really there');
 });
 
-test('a junction the host never reported is tracked without touching the channel', async () => {
-  // The junction only exists in the cache because the request is about to create it.
-  // It has to be that request's own target: muting a junction must never fall back to
-  // the channel, because the two scopes are independent and a user who caps a mix
-  // does not expect the channel itself to go quiet.
+test('a junction the host never reported is asked for, but never invented', async () => {
+  // The optimistic read-back needs somewhere to read back from, and the obvious move
+  // is to create the junction. That was tried and is wrong: _updateChannel only
+  // overwrites the junctions a notification lists, so an invented one the host never
+  // confirms sits in the cache for the rest of the session, showing a mute that never
+  // happened. The inspector offers every mix for every channel without filtering, so a
+  // user reaches an invalid junction in two clicks.
+  //
+  // So the request goes out, nothing is written first, and the host's own notification
+  // is what brings the scope into the cache.
   const { client, registry } = fixture({
     channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }],
   });
-  await registry.toggleChannelMute('ch1', 'mix1');
 
-  assert.deepEqual(client.calls[0], ['setChannel', 'ch1', { mixes: [{ id: 'mix1', isMuted: true }] }]);
-  assert.equal(registry.getChannel('ch1').isMuted, false, 'the channel itself must stay unmuted');
-  assert.deepEqual(
-    registry.getChannel('ch1').mixes,
-    [{ id: 'mix1', isMuted: true }],
-    'and the junction is readable straight away, before any notification'
+  await registry.toggleChannelMute('ch1', 'mix1');
+  assert.deepEqual(client.calls[0], ['setChannel', 'ch1', { mixes: [{ id: 'mix1', isMuted: true }] }], 'the request is still sent');
+  assert.deepEqual(registry.getChannel('ch1').mixes, [], 'but nothing is invented in its place');
+  assert.equal(registry.getChannel('ch1').isMuted, false, 'and the channel itself is never touched');
+
+  // Once the host does report the junction, it is tracked from then on. The transport
+  // is what merges a notification into its cache, so the fake does it by hand.
+  client.lastState.channels[0].mixes = [{ id: 'mix1', isMuted: true }];
+  client.emit('channelChanged', { id: 'ch1', mixes: [{ id: 'mix1', isMuted: true }] });
+  await registry.toggleChannelMute('ch1', 'mix1');
+  assert.equal(
+    client.calls[1][2].mixes[0].isMuted,
+    false,
+    'and the next press reads it back and asks for the opposite'
   );
 });
 
