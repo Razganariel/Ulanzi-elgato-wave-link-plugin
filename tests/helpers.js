@@ -17,15 +17,17 @@ export const SERVICE_ROOT = path.join(PLUGIN_ROOT, 'service');
 export const ACTION_UUID = 'com.ulanzi.ulanzistudio.wavelink';
 
 /**
- * Removes line and block comments.
+ * Removes comments: JavaScript ones and XML ones alike.
  *
- * Several checks scan the plugin sources for a construct that must not appear. Doing
- * that on the raw text reads the prose too, and a comment explaining why a call is not
- * made contains the very name being hunted -- two of these checks failed on their own
- * justification before the sources were stripped. Line and block comments go; string
- * literals are left alone, which is a known limit and harmless here.
+ * Several checks scan the sources for a construct that must not appear. Doing that on the
+ * raw text reads the prose too, and a comment explaining why a call is not made contains
+ * the very name being hunted -- several of these checks failed on their own justification
+ * before the sources were stripped. Line and block comments go, and so do `<!-- -->`,
+ * because the icon files are XML and a note about dash patterns otherwise reads as a
+ * dash pattern. String literals are left alone, which is a known limit and harmless here.
  */
 export const stripComments = (source) => source
+  .replace(/<!--[\s\S]*?-->/g, '')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/(^|[^:])\/\/.*$/gm, '$1');
 

@@ -1,11 +1,18 @@
 <svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
   <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
-  <!-- Vertical fader track -->
-  <rect x="33" y="16" width="6" height="40" rx="3" fill="#333"/>
-  <!-- Fader knob -->
-  <circle cx="36" cy="36" r="10" fill="#ef476f" stroke="#d63761" stroke-width="2"/>
-  <rect x="33" y="32" width="6" height="8" rx="2" fill="#d63761"/>
-  <!-- Mute slash across fader -->
+  <!-- Rotary knob.
+       The travel is a single arc command whose flags were derived by computation. It
+       was a dashed circle plus a transform, and the deck rendered that rotated: the gap
+       of a stroke-dasharray and the transform of a shape are not things to assume here.
+       Start 22.565 45.435 (7h30), end 49.435 45.435 (4h30), centre (36,32),
+       large-arc 1, sweep 1, so it runs 270 degrees the long way through 9h and 12h and
+       the opening at the bottom is where a potentiometer has its notch. -->
+  <path d="M22.565 45.435 A19 19 0 1 1 49.435 45.435" fill="none" stroke="#e0e0e0" stroke-width="3" stroke-linecap="round"/>
+  <!-- Knob body, in the state colour -->
+  <circle cx="36" cy="32" r="12" fill="#ef476f" stroke="#d63761" stroke-width="2"/>
+  <!-- Marker: three quarters of the travel when the scope is live, hard left when muted -->
+  <path d="M33.2 34.8 L29.3 38.7" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Mute slash, bottom-left to top-right like every other muted icon -->
   <path d="M18 54 L54 18" stroke="#ef476f" stroke-width="5" stroke-linecap="round"/>
   <text x="36" y="62" text-anchor="middle" font-size="8" fill="#888">MIX MUTE</text>
 </svg>

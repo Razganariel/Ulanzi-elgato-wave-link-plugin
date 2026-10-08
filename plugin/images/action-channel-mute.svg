@@ -1,11 +1,18 @@
 <svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
   <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
-  <!-- Microphone icon -->
-  <path d="M36 16 L36 38" stroke="#ef476f" stroke-width="5" stroke-linecap="round"/>
-  <path d="M28 38 A10 10 0 1 0 44 38" stroke="#ef476f" stroke-width="5" fill="none" stroke-linecap="round"/>
-  <path d="M24 38 L20 44" stroke="#ef476f" stroke-width="4" stroke-linecap="round"/>
-  <path d="M48 38 L52 44" stroke="#ef476f" stroke-width="4" stroke-linecap="round"/>
-  <!-- Mute slash -->
-  <path d="M18 18 L54 54" stroke="#ef476f" stroke-width="5" stroke-linecap="round"/>
-  <text x="36" y="62" text-anchor="middle" font-size="8" fill="#888">MUTE</text>
+  <!-- Microphone, built so the parts actually meet.
+       Capsule: width 16 with rx 8, so both ends are perfect half circles. -->
+  <rect x="28" y="12" width="16" height="22" rx="8" fill="none" stroke="#ef476f" stroke-width="4"/>
+  <!-- Cradle: a 16 radius across a 32 chord is a diameter, so this is an exact
+       semicircle with a single possible centre at (36,30) and its bottom at (36,46),
+       which is where the stem starts. A chord shorter than the diameter would leave
+       two candidate centres and the sweep flag would decide the shape, and that is how
+       the previous version ended up sweeping 254 degrees down to y=54. -->
+  <path d="M20 30 A16 16 0 0 0 52 30" fill="none" stroke="#ef476f" stroke-width="4" stroke-linecap="round"/>
+  <path d="M36 46 L36 52" stroke="#ef476f" stroke-width="4" stroke-linecap="round"/>
+  <path d="M26 52 L46 52" stroke="#ef476f" stroke-width="4" stroke-linecap="round"/>
+  <!-- Mute slash, bottom-left to top-right: the same direction as every other muted
+       icon here. This one ran the other way. -->
+  <path d="M18 54 L54 18" stroke="#ef476f" stroke-width="5" stroke-linecap="round"/>
+  <text x="36" y="62" text-anchor="middle" font-size="8" fill="#888">CH MUTE</text>
 </svg>
