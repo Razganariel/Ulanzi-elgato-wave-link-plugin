@@ -10,10 +10,20 @@ export const ACTION = Object.freeze({
   CONNECT: `${PLUGIN_UUID}.connect`,
 });
 
+/**
+ * State indices, shared by every action that can mute.
+ *
+ * UNMUTED is 0 on purpose. The host paints state 0 for a key the plugin has not
+ * answered yet, so the first state has to be what the key should look like at rest --
+ * and an action nobody has pressed is not muted. It also makes the icon an action shows
+ * in the list equal to the one a dropped key falls back to, which is what the manifest
+ * pins. Muted being 1 and not 0 cost a round of re-ordering; DEFAULT and UNMUTED being
+ * the same number is not a coincidence, it is the same idea.
+ */
 export const STATE = Object.freeze({
   DEFAULT: 0,
-  MUTED: 0,
-  UNMUTED: 1,
+  UNMUTED: 0,
+  MUTED: 1,
 });
 
 export const LIMITS = Object.freeze({
@@ -37,6 +47,7 @@ export const ENCODER_ICON = Object.freeze({
   CHANNEL_VOLUME: 'images/action-channel-volume.svg',
   CHANNEL_VOLUME_MUTED: 'images/action-channel-volume-muted.svg',
   MIX_VOLUME: 'images/action-mix-volume.svg',
+  MIX_VOLUME_MUTED: 'images/action-mix-volume-muted.svg',
 });
 
 export const REPAINT_DELAY_MS = 400;

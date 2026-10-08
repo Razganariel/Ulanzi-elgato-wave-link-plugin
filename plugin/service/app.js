@@ -12,7 +12,7 @@ import { PLUGIN_UUID, REPAINT_DELAY_MS } from './core/constants.js';
 import { waveLinkRegistry } from './core/registry.js';
 import { findByUuid } from './actions/index.js';
 import { decodeContext, ensureEntry, forget, forgetActionId } from './core/context.js';
-import { trace, tracePath } from './core/trace.js';
+import { trace, tracing } from './core/trace.js';
 import { forgetHostDisplay, pruneHostDisplay } from './core/ui.js';
 
 const $UD = new UlanziApi();
@@ -35,17 +35,6 @@ function isEncoderContext(context, entry) {
   const remembered = controllers.get(context);
   if (remembered) return remembered === 'Encoder';
   return encoderActions.has(entry?.action?.uuid || decodeContext(context).uuid);
-}
-
-const globalSettings = { channelId: '', mixId: '' };
-
-function saveGlobalSettings(settings) {
-  Object.assign(globalSettings, settings);
-  try {
-    $UD.setGlobalSettings({ ...globalSettings });
-  } catch (err) {
-    log(`cannot persist global settings: ${err.message}`, 'warn');
-  }
 }
 
 function log(msg, level = 'info') {
@@ -137,10 +126,6 @@ function handlerContext(context, isEncoder) {
     channels: snap.channels,
     mixes: snap.mixes,
     report: (err) => report(err, context),
-    connect: async () => {
-      await waveLinkRegistry.connect();
-      refresh(context);
-    },
   };
 }
 
@@ -160,12 +145,20 @@ function scheduleRefresh(only) {
   }, REPAINT_DELAY_MS);
 }
 
+/**
+ * Paints the keys named in `list`, in one pass.
+ *
+ * It used to call refresh(ctx) per entry, and refresh() walks every context and
+ * reconciles both caches before painting one. So a single notification about one channel
+ * walked the whole deck once per key on it: quadratic, on the path Wave Link takes
+ * several times a second while a knob turns. Pruning is done once here and the loop
+ * paints directly.
+ */
 function refreshAll(list) {
-  const seen = new Set();
-  for (const ctx of list) {
-    if (seen.has(ctx) || !contexts.has(ctx)) continue;
-    seen.add(ctx);
-    refresh(ctx);
+  pruneCaches();
+  const wanted = new Set(list);
+  for (const [ctx, entry] of contexts) {
+    if (wanted.has(ctx)) paint(ctx, entry);
   }
 }
 
@@ -213,30 +206,44 @@ function sendInspectorState(ctx, snap, channelId, mixId, { force = false } = {})
   $UD.sendToPropertyInspector(payload, ctx);
 }
 
-function refresh(only, options) {
-  // Reconcile the caches before painting: contexts vanish in bulk (a whole slot on a
-  // removal, the old one on a move), and a forgotten entry would outlive the session
-  // or wrongly suppress the next send for a returning key.
+/**
+ * Drops cached entries whose context is no longer live.
+ *
+ * Contexts vanish in bulk -- a whole slot on a removal, the old one on a move -- and a
+ * forgotten entry would outlive the session or wrongly suppress the next send for a
+ * key that came back.
+ */
+function pruneCaches() {
   pruneHostDisplay(contexts);
   for (const ctx of [...lastInspectorPayload.keys()]) {
     if (!contexts.has(ctx)) lastInspectorPayload.delete(ctx);
   }
+}
+
+/** Draws one key: its icon, then the state of its property inspector. */
+function paint(ctx, entry, options) {
+  const isEncoder = isEncoderContext(ctx, entry);
+  const ctxForAction = handlerContext(ctx, isEncoder);
+  try {
+    entry.action?.render?.(ctxForAction);
+  } catch (err) {
+    log(`render failed for ${ctx}: ${err.message}`, 'warn');
+  }
+  sendInspectorState(
+    ctx,
+    ctxForAction.snap,
+    ctxForAction.channelId,
+    ctxForAction.mixId,
+    options
+  );
+}
+
+/** Paints the one named key, or the whole deck when `only` is omitted. */
+function refresh(only, options) {
+  pruneCaches();
   for (const [ctx, entry] of contexts) {
     if (only && ctx !== only) continue;
-    const isEncoder = isEncoderContext(ctx, entry);
-    const ctxForAction = handlerContext(ctx, isEncoder);
-    try {
-      entry.action?.render?.(ctxForAction);
-    } catch (err) {
-      log(`render failed for ${ctx}: ${err.message}`, 'warn');
-    }
-    sendInspectorState(
-      ctx,
-      ctxForAction.snap,
-      ctxForAction.channelId,
-      ctxForAction.mixId,
-      options
-    );
+    paint(ctx, entry, options);
   }
 }
 
@@ -270,21 +277,16 @@ waveLinkRegistry.on('mixChanged', () => {
   scheduleRefresh();
 });
 
-function readHostGlobalSettings() {
-  try {
-    const file = new URL('../../../Config/global_settings.json', import.meta.url);
-    const all = JSON.parse(readFileSync(file, 'utf8'));
-    return all?.[PLUGIN_UUID] || {};
-  } catch {
-    return {};
-  }
-}
-
-const persisted = readHostGlobalSettings();
-
 $UD.connect(PLUGIN_UUID);
 
-trace('SYS ', `trace file: ${tracePath || '(unavailable)'}`);
+// Said with log() and not trace(): trace() writes nothing while the switch is off, so
+// this is the only way the state of tracing is visible at all in the host log.
+log(
+  tracing.on
+    ? `tracing on -> ${tracing.path || '(unavailable)'}`
+    : 'tracing off (set TRACING to true in service/core/trace.js)',
+  'info'
+);
 try {
   const ws = $UD.websocket;
   const onMessage = ws.onmessage;
@@ -304,20 +306,12 @@ try {
 
 $UD.onConnected(() => {
   log('main service connected to UlanziStudio');
-  $UD.getGlobalSettings();
   // Auto-connect to Wave Link on startup
   waveLinkRegistry.start().catch((err) => log(`Wave Link auto-connect failed: ${err.message}`, 'warn'));
 });
 
 $UD.onClose(() => log('websocket closed', 'warn'));
 $UD.onError((err) => log(`websocket error: ${err}`, 'error'));
-
-$UD.onDidReceiveGlobalSettings((message) => {
-  trace('GLOB', message);
-  const settings = message?.settings || message?.payload || message || {};
-  if (settings.channelId) globalSettings.channelId = settings.channelId;
-  if (settings.mixId) globalSettings.mixId = settings.mixId;
-});
 
 $UD.onAdd((message) => {
   const context = message.context;
@@ -465,24 +459,6 @@ current.settings = { ...current.settings, ...(payload.settings || {}) };
       refresh(context);
       return;
     }
-    if (payload.event === 'set-channel') {
-      const current = contexts.get(context);
-      if (current) {
-        current.settings = { ...current.settings, channelId: String(payload.channelId || '') };
-        $UD.setSettings(current.settings, context);
-      }
-      refresh(context);
-      return;
-    }
-    if (payload.event === 'set-mix') {
-      const current = contexts.get(context);
-      if (current) {
-        current.settings = { ...current.settings, mixId: String(payload.mixId || '') };
-        $UD.setSettings(current.settings, context);
-      }
-      refresh(context);
-      return;
-    }
     if (payload.event === 'get-registry') {
       log(`get-registry received for context: ${context}`);
       // Only the panel that asked. Refreshing every instance of the action looked
@@ -501,6 +477,13 @@ current.settings = { ...current.settings, ...(payload.settings || {}) };
 
 process.on('uncaughtException', (err) => {
   log(`uncaught: ${err && err.stack ? err.stack : err}`, 'error');
+});
+
+// Node raises an unhandled rejection as an uncaught exception, so without this the
+// two would be indistinguishable in the log: a stray promise would be filed as a
+// crash and send the reader looking for a bug that is not there.
+process.on('unhandledRejection', (reason) => {
+  log(`unhandled rejection: ${(reason && reason.message) || reason}`, 'error');
 });
 
 process.on('SIGINT', () => {

@@ -1,7 +1,8 @@
 /**
  * Host UI helpers. The encoder display commands (setFeedbackLayout / setFeedback)
- * need UlanziStudio 3.3.0+; on older hosts they must not break the classic state
- * icon, so every call is individually guarded.
+ * need UlanziStudio 3.3.0+, which is why the manifest still declares 3.0.11: on an older
+ * host the calls throw, are caught, and what is lost is the dial's icon, not the action.
+ * A dial then shows no mute state of its own, while the key beside it still does.
  *
  * Everything the plugin draws is remembered per context and re-sent only when it
  * actually differs. Wave Link notifies on every level change, so the repaint path
@@ -71,18 +72,18 @@ export function forgetHostDisplay(context) {
   lastStateIcon.delete(context);
 }
 
-/**
- * Drops every remembered label whose context is no longer live.
- *
- * The cache is keyed by context, and contexts do not disappear one at a time:
- * forgetting a key purges the whole slot, which can hold several instances of the
- * same action, and moving an action drops its previous context. Forgetting only the
- * one context named in the event left the others behind, so the map grew for the
- * whole session and a context that came back could be wrongly believed to already
- * carry its label. Reconciling against the live set is complete by construction and
- * costs one pass over a handful of keys.
- *
- * @param {Iterable<string>} liveContexts
+  /**
+   * Drops every icon this cache remembers whose context is no longer live.
+   *
+   * The cache is keyed by context, and contexts do not disappear one at a time:
+   * forgetting a key purges the whole slot, which can hold several instances of the
+   * same action, and moving an action drops its previous context. Forgetting only the
+   * one context named in the event left the others behind, so the map grew for the
+   * whole session and a context that came back could be wrongly believed to already
+   * carry its icon. Reconciling against the live set is complete by construction and
+   * costs one pass over a handful of keys.
+   *
+   * @param {Iterable<string>} liveContexts
  */
 export function pruneHostDisplay(liveContexts) {
   for (const context of [...lastEncoderIcon.keys()]) {

@@ -12,6 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { WaveLinkRegistry } from '../plugin/service/core/registry.js';
+import { scopeEntry, scopeLevel, scopeMuted } from '../plugin/service/core/scope.js';
 
 /** Records every call instead of sending it, and holds the state Wave Link would. */
 class FakeClient extends EventEmitter {
@@ -62,7 +63,156 @@ function fixture({ channels = [], mixes = [] } = {}) {
   return { client, registry: new WaveLinkRegistry(client) };
 }
 
+/** A transport that refuses until it is told otherwise, like a Wave Link that is not running. */
+class FailingClient extends FakeClient {
+  constructor() {
+    super();
+    this.failing = true;
+  }
+
+  async connect() {
+    this.connectCalls++;
+    if (this.failing) throw new Error('Wave Link absent');
+    this.connected = true;
+    this.emit('connected');
+  }
+}
+
 const channel = (over = {}) => ({ id: 'ch1', name: 'Mic 1', level: 0.5, isMuted: false, mixes: [], ...over });
+
+test('a failed connection does not lock out the next attempt', async () => {
+  // The Connect action on the deck and the button in the property inspector both go
+  // through connect(). If a failed attempt leaves the in-flight guard armed, every
+  // later call returns as if it had connected, without reaching Wave Link at all:
+  // the button looks alive and does nothing, forever, with nothing in the log.
+  const client = new FailingClient();
+  const registry = new WaveLinkRegistry(client);
+
+  await assert.rejects(registry.connect(), /Wave Link absent/);
+  assert.equal(registry.snapshot().connecting, false, 'a failure must not look like a connection in progress');
+
+  // Wave Link comes up, and the user presses Connect.
+  client.failing = false;
+  await registry.connect();
+  assert.equal(client.connectCalls, 2, 'the second attempt must actually reach Wave Link');
+  assert.equal(registry.isConnected(), true);
+});
+
+test('connect can be retried while Wave Link stays down, and reports each failure', async () => {
+  const client = new FailingClient();
+  const registry = new WaveLinkRegistry(client);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await assert.rejects(registry.connect(), /Wave Link absent/, `attempt ${attempt} must surface its error`);
+  }
+  assert.equal(client.connectCalls, 3, 'each press must reach Wave Link');
+
+  client.failing = false;
+  await registry.connect();
+  assert.equal(registry.isConnected(), true, 'and a later press must still connect');
+  assert.equal(client.connectCalls, 4);
+});
+
+test('connect refuses to run twice at the same time', async () => {
+  // Removing the guard is not the fix: two overlapping attempts would open two
+  // sockets and duplicate every subscription. Only a failure has to release it.
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const client = new FakeClient();
+  client.connect = async () => {
+    client.connectCalls++;
+    await gate;
+    client.connected = true;
+    client.emit('connected');
+  };
+  const registry = new WaveLinkRegistry(client);
+
+  const inFlight = registry.connect();
+  const second = registry.connect();
+  release();
+  await Promise.all([inFlight, second]);
+
+  assert.equal(client.connectCalls, 1, 'the second call must be dropped while the first is in flight');
+  assert.equal(registry.snapshot().connecting, false, 'and the guard must be released once it settles');
+});
+
+test('a client error is relayed, and a registry nobody watches survives it', () => {
+  // Same hazard one hop further along: the registry re-emits 'error' on itself, and
+  // EventEmitter throws when 'error' has no listener. The service attaches one at
+  // startup, so forwarding is what production does and must keep doing.
+  const { client, registry } = fixture();
+  const seen = [];
+  registry.on('error', (err) => seen.push(err.message));
+  registry.bind();
+  client.emit('error', new Error('ECONNREFUSED'));
+  assert.deepEqual(seen, ['ECONNREFUSED'], 'a watched registry must still forward');
+
+  const other = fixture();
+  other.registry.bind();
+  assert.doesNotThrow(
+    () => other.client.emit('error', new Error('ECONNREFUSED')),
+    'an unwatched registry must not take the service down either'
+  );
+});
+
+test('disconnect really releases the transport, not just the flag', async () => {
+  // Clearing `_bound` looked like it undid the subscription, and it did not: the
+  // transport kept all seven listeners, so the next connect() bound a second set over
+  // the first. The repaint path hides the duplicates -- pending contexts sit in a Set
+  // behind a debounce -- but the listener count grows by seven every cycle, and the
+  // three events that are not deduplicated print twice in the log.
+  const { client, registry } = fixture();
+  const seen = [];
+  for (const event of ['connected', 'disconnected', 'channelChanged', 'mixChanged']) {
+    registry.on(event, () => seen.push(event));
+  }
+
+  await registry.start();
+  const bound = client.eventNames().length;
+  assert.equal(bound, 7, 'binding attaches one listener per event');
+
+  for (let cycle = 0; cycle < 5; cycle += 1) {
+    registry.disconnect();
+    await registry.start();
+  }
+  assert.equal(
+    client.eventNames().length,
+    bound,
+    'five disconnect/start cycles must leave the transport with exactly one set'
+  );
+
+  seen.length = 0;
+  client.emit('channelChanged', { id: 'ch1' });
+  assert.deepEqual(seen, ['channelChanged'], 'and an event must be forwarded exactly once');
+});
+
+test('a disconnected registry keeps nothing and says nothing more', () => {
+  const { client, registry } = fixture();
+  const seen = [];
+  registry.on('connected', () => seen.push('connected'));
+  registry.on('disconnected', () => seen.push('disconnected'));
+  registry.bind();
+  registry.disconnect();
+
+  // Telling the transport to close makes it report back, and that one is honest:
+  // the registry did go down. Anything after it is not, because it has let go.
+  assert.deepEqual(seen, ['disconnected'], 'its own disconnection is reported exactly once');
+
+  client.emit('connected');
+  client.emit('disconnected');
+  assert.deepEqual(seen, ['disconnected'], 'and nothing is forwarded afterwards');
+  assert.equal(client.eventNames().length, 0, 'with no listener left on the transport');
+});
+
+test('bind is idempotent while it is in force', async () => {
+  const { client, registry } = fixture();
+  registry.bind();
+  registry.bind();
+  registry.bind();
+  assert.equal(client.eventNames().length, 7, 'binding twice must not double the listeners');
+});
 
 test('start connects once and never twice', async () => {
   const { client, registry } = fixture();
@@ -225,6 +375,212 @@ test('setMixMute sends an explicit mute flag', async () => {
   assert.deepEqual(client.calls[0], ['setMix', 'mix1', { isMuted: true }]);
 });
 
+test('consecutive toggles alternate, because nothing else can report the change in time', async () => {
+  // Wave Link answers a setChannel with a notification, and that round trip has not
+  // completed when the next press lands. The fake transport never notifies, which is
+  // exactly that situation: pressed twice, and the second time the cache still said
+  // unmuted, so the same value was asked for again and the second press vanished.
+  const { client, registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [{ id: 'mix1', level: 0.5, isMuted: false }] }],
+    mixes: [{ id: 'mix1', name: 'Stream Mix', level: 1, isMuted: false }],
+  });
+
+  await registry.toggleChannelMute('ch1');
+  await registry.toggleChannelMute('ch1');
+  await registry.toggleChannelMute('ch1');
+  assert.deepEqual(
+    client.calls.map((c) => c[2].isMuted),
+    [true, false, true],
+    'three presses must mute, unmute, mute'
+  );
+
+  const junction = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [{ id: 'mix1', level: 0.5, isMuted: false }] }],
+  });
+  await junction.registry.toggleChannelMute('ch1', 'mix1');
+  await junction.registry.toggleChannelMute('ch1', 'mix1');
+  assert.deepEqual(
+    junction.client.calls.map((c) => c[2].mixes[0].isMuted),
+    [true, false],
+    'and the same for a junction'
+  );
+
+  const mix = fixture({ mixes: [{ id: 'mix1', name: 'Stream Mix', level: 1, isMuted: false }] });
+  await mix.registry.toggleMixMute('mix1');
+  await mix.registry.toggleMixMute('mix1');
+  assert.deepEqual(
+    mix.client.calls.map((c) => c[2].isMuted),
+    [true, false],
+    'and for a mix'
+  );
+});
+
+test('a refused toggle is never shown as applied', async () => {
+  // The optimistic write is a claim made before the answer arrives. If the request
+  // fails, that claim has to be withdrawn, or the key and the dial sit on a mute that
+  // did not happen until some unrelated notification corrects them.
+  const { client, registry } = fixture({ channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }] });
+  client.setChannel = async () => {
+    throw new Error('Wave Link refused');
+  };
+
+  await assert.rejects(registry.toggleChannelMute('ch1'), /refused/);
+  assert.equal(registry.channelMuted('ch1'), false, 'the cache must not keep a mute that failed');
+});
+
+test('a refused junction toggle leaves no junction behind', async () => {
+  const { client, registry } = fixture({ channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }] });
+  client.setChannel = async () => {
+    throw new Error('Wave Link refused');
+  };
+
+  await assert.rejects(registry.toggleChannelMute('ch1', 'mix1'), /refused/);
+  assert.equal(
+    registry.getChannel('ch1').mixes.length,
+    0,
+    'the junction was only created to hold the optimistic value, so it goes away with it'
+  );
+});
+
+test('consecutive steps accumulate instead of restarting from the same level', async () => {
+  // Measured before the fix: four rotations of +0.05 from 0.50 sent 0.55 four times,
+  // so three steps in four were absorbed. Every rotation that outran the notification
+  // was computed from the same starting level, and rotating a dial is the most
+  // repeated action the plugin performs.
+  for (const [label, run] of [
+    ['channel', async (registry, client) => {
+      for (let i = 0; i < 4; i += 1) await registry.stepChannelVolume('ch1', 0.05);
+    }],
+    ['junction', async (registry) => {
+      for (let i = 0; i < 4; i += 1) await registry.stepChannelVolume('ch1', 0.05, 'mix1');
+    }],
+    ['mix', async (registry) => {
+      for (let i = 0; i < 4; i += 1) await registry.stepMixVolume('mix1', 0.05);
+    }],
+  ]) {
+    const { client, registry } = fixture({
+      channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [{ id: 'mix1', level: 0.5, isMuted: false }] }],
+      mixes: [{ id: 'mix1', name: 'Stream Mix', level: 0.5, isMuted: false }],
+    });
+    await run(registry, client);
+    const levels = client.calls.map((c) => c[2].level ?? c[2].mixes[0].level);
+    assert.deepEqual(levels, [0.55, 0.6, 0.65, 0.7], `four ${label} steps must not restart`);
+  }
+});
+
+test('a refused step is not shown as applied', async () => {
+  const { client, registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }],
+  });
+  client.setChannel = async () => {
+    throw new Error('Wave Link refused');
+  };
+  await assert.rejects(registry.stepChannelVolume('ch1', 0.05), /refused/);
+  assert.equal(registry.getChannel('ch1').level, 0.5, 'the cache must keep the level that is really there');
+});
+
+test('a junction the host never reported is asked for, but never invented', async () => {
+  // The optimistic read-back needs somewhere to read back from, and the obvious move
+  // is to create the junction. That was tried and is wrong: _updateChannel only
+  // overwrites the junctions a notification lists, so an invented one the host never
+  // confirms sits in the cache for the rest of the session, showing a mute that never
+  // happened. The inspector offers every mix for every channel without filtering, so a
+  // user reaches an invalid junction in two clicks.
+  //
+  // So the request goes out, nothing is written first, and the host's own notification
+  // is what brings the scope into the cache.
+  const { client, registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }],
+  });
+
+  await registry.toggleChannelMute('ch1', 'mix1');
+  assert.deepEqual(client.calls[0], ['setChannel', 'ch1', { mixes: [{ id: 'mix1', isMuted: true }] }], 'the request is still sent');
+  assert.deepEqual(registry.getChannel('ch1').mixes, [], 'but nothing is invented in its place');
+  assert.equal(registry.getChannel('ch1').isMuted, false, 'and the channel itself is never touched');
+
+  // Once the host does report the junction, it is tracked from then on. The transport
+  // is what merges a notification into its cache, so the fake does it by hand.
+  client.lastState.channels[0].mixes = [{ id: 'mix1', isMuted: true }];
+  client.emit('channelChanged', { id: 'ch1', mixes: [{ id: 'mix1', isMuted: true }] });
+  await registry.toggleChannelMute('ch1', 'mix1');
+  assert.equal(
+    client.calls[1][2].mixes[0].isMuted,
+    false,
+    'and the next press reads it back and asks for the opposite'
+  );
+});
+
+test('a channel handed to an action is a copy, and stays serialisable', () => {
+  // app.js attaches the registry to a copy of the channel, because the action calls
+  // channel.registry.setChannelVolume(...). Two things depend on that copy. An action
+  // must not be able to corrupt the transport's own state, and a channel carrying a
+  // registry has to stay serialisable -- Wave Link's channels are full of base64 icons
+  // and the inspector payload is JSON.stringify'd whole, so a registry attached to the
+  // cached object would make that throw and take the panel down with a blank select.
+  //
+  // This asserts the shape of that copy. The other half -- that app.js really makes it
+  // -- is asserted on the source in render.test.js, because app.js connects to the host
+  // the moment it is imported and cannot be loaded here.
+  const channel = { id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] };
+  const registry = { marker: true };
+  const carried = { ...channel, registry };
+
+  assert.notEqual(carried, channel, 'it is a copy');
+  carried.level = 1;
+  assert.equal(channel.level, 0.5, 'writing to it leaves the cache alone');
+  assert.doesNotThrow(() => JSON.stringify(carried), 'and it can still be serialised');
+});
+
+test('what a panel receives cannot reach the cache it was built from', () => {
+  // registry.getChannels() hands out the transport's live arrays -- it has to, because
+  // the optimistic writes go into them and the notification merges into them in place.
+  // The protection is what is built from those arrays, not the arrays themselves.
+  const { registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }],
+    mixes: [{ id: 'mix1', name: 'Stream Mix', level: 1, isMuted: false }],
+  });
+
+  // This is what pickerLists builds: fresh objects, carrying an id and a name only.
+  const panelSees = {
+    channels: registry.getChannels().map((c) => ({ id: c.id, name: c.name })),
+    mixes: registry.getMixes().map((m) => ({ id: m.id, name: m.name })),
+  };
+  assert.deepEqual(panelSees.channels, [{ id: 'ch1', name: 'Mic' }]);
+  assert.ok(!('level' in panelSees.channels[0]), 'and no level, which is what made the payload churn');
+
+  // Anything that comes back out of it cannot be traced to the cache.
+  panelSees.channels[0].name = 'tampered';
+  panelSees.channels.push({ id: 'ghost', name: 'ghost' });
+  assert.equal(registry.getChannel('ch1').name, 'Mic', 'the channel is untouched');
+  assert.equal(registry.getChannels().length, 1, 'and no entry was added');
+  assert.doesNotThrow(() => JSON.stringify(panelSees), 'the payload stays serialisable');
+});
+
+test('a scope reads the same way everywhere it is asked about', () => {
+  // The four action modules and the registry used to each carry their own copy of this,
+  // and they drifted: an encoder showed the channel's mute while its press only touched
+  // a junction, and a step was computed from the channel's level with a junction bound.
+  const channel = {
+    level: 0.4,
+    isMuted: true,
+    mixes: [{ id: 'mix1', level: 0.8, isMuted: false }],
+  };
+
+  assert.equal(scopeLevel(channel, ''), 0.4, 'no mix means the channel itself');
+  assert.equal(scopeLevel(channel, 'mix1'), 0.8, 'a mix means that junction');
+  assert.equal(scopeLevel(channel, 'unknown'), 0.4, 'an unreported junction measures from the channel');
+  assert.equal(scopeLevel(channel, null), 0.4);
+  assert.equal(scopeLevel(null, 'mix1'), 0, 'and nothing at all reads as silence');
+
+  assert.equal(scopeMuted(channel, ''), true);
+  assert.equal(scopeMuted(channel, 'mix1'), false, 'the two scopes stay independent');
+  assert.equal(scopeMuted(channel, 'unknown'), false, 'an unreported junction is not muted');
+  assert.equal(scopeMuted(null, 'mix1'), false);
+
+  assert.equal(scopeEntry(channel, ''), channel, 'no scope is the subject itself');
+  assert.equal(scopeEntry(channel, 'mix1'), channel.mixes[0]);
+  assert.equal(scopeEntry(channel, 'unknown'), null, 'and one the host never reported is null, not invented');
+});
 test('toggleMixMute inverts the cached state and refuses an unknown mix', async () => {
   const { client, registry } = fixture({ mixes: [{ id: 'mix1', level: 1, isMuted: false }] });
   await registry.toggleMixMute('mix1');

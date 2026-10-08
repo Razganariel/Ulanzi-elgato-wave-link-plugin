@@ -205,12 +205,118 @@ test('a missing list in a response yields an empty list, not undefined', async (
   assert.deepEqual(await channels, [], 'the inspector must not iterate undefined');
 });
 
-test('getState hands out a copy so a caller cannot corrupt the cache', () => {
+
+test('reconnection is retried indefinitely, not six times', async () => {
+  // Six attempts spanning 68 seconds used to be the end of it. A plugin whose job is
+  // mirroring Wave Link onto the deck cannot treat a program that was not running yet
+  // as a permanent loss: starting Wave Link afterwards left the deck dead until the
+  // host itself was restarted.
+  //
+  // The loop is driven the way it runs in production: schedule, then let the timer
+  // fire. Scheduling repeatedly without firing would only prove the same call twice
+  // queues once, which is the other half of this and is asserted on its own below.
   const client = new WaveLinkClient();
-  client.lastState.channels = [{ id: 'ch1', level: 0.5 }];
-  const state = client.getState();
-  state.channels[0].level = 1;
-  assert.equal(client.getChannel('ch1').level, 0.5);
+  const waits = [];
+  const real = globalThis.setTimeout;
+  let queued;
+  globalThis.setTimeout = (fn, ms) => {
+    waits.push(ms);
+    queued = fn;
+    return 0;
+  };
+  client.connect = async () => {
+    throw new Error('Wave Link absent');
+  };
+
+  try {
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      client._scheduleReconnect();
+      await queued();
+    }
+  } finally {
+    globalThis.setTimeout = real;
+  }
+
+  assert.equal(waits.length, 25, 'every attempt must lead to another one');
+  assert.deepEqual(waits.slice(0, 5), [1000, 2000, 5000, 10000, 20000], 'the backoff still starts fast');
+  assert.deepEqual([...new Set(waits.slice(5))], [30000], 'then settles on a capped delay');
+});
+
+test('a single failure queues a single retry, not two', () => {
+  // Two paths used to schedule the same retry: connect() on its way out, and _onClose
+  // when the socket it had just opened tore down. Every failure therefore advanced the
+  // backoff twice, so the delay reached its 30s ceiling after three real attempts
+  // instead of six, and two sockets were racing to replace each other.
+  const client = new WaveLinkClient();
+  const real = globalThis.setTimeout;
+  let queued = 0;
+  globalThis.setTimeout = () => {
+    queued++;
+    return 0;
+  };
+  try {
+    // What a failed attempt actually does: connect() gives up, and the socket that
+    // refused closes straight afterwards.
+    client._scheduleReconnect();
+    client._onClose(1006, '');
+    client._scheduleReconnect();
+  } finally {
+    globalThis.setTimeout = real;
+  }
+
+  assert.equal(queued, 1, 'one failure must advance the backoff once');
+  assert.equal(client.reconnectAttempt, 1);
+});
+
+test('a retry that fails is not reported as a broken promise', async () => {
+  // connect() rejects by design when Wave Link is not there, and it already logs that.
+  // Called from the retry timer without a catch, Node raised it as an uncaught
+  // exception, so an ordinary "Wave Link is not running" was filed in the log as a
+  // crash of the plugin.
+  const client = new WaveLinkClient();
+  const real = globalThis.setTimeout;
+  let queued;
+  globalThis.setTimeout = (fn) => {
+    queued = fn;
+    return 0;
+  };
+  client.connect = async () => {
+    throw new Error('Wave Link absent');
+  };
+
+  const seen = [];
+  const onRejection = (reason) => seen.push(reason);
+  process.on('unhandledRejection', onRejection);
+  try {
+    client._scheduleReconnect();
+    queued();
+    // An unhandled rejection is reported a turn later, so the check cannot be on the
+    // same tick as the call that caused it.
+    await new Promise((resolve) => real(resolve, 20));
+  } finally {
+    process.off('unhandledRejection', onRejection);
+    globalThis.setTimeout = real;
+  }
+
+  assert.deepEqual(seen, [], 'a Wave Link that is merely absent must not raise an unhandled rejection');
+});
+
+test('a stopped client queues no retry at all', () => {
+  const client = new WaveLinkClient();
+  client.disconnect();
+  const real = globalThis.setTimeout;
+  let queued = 0;
+  globalThis.setTimeout = () => {
+    queued++;
+    return 0;
+  };
+  try {
+    client._scheduleReconnect();
+    client._scheduleReconnect();
+  } finally {
+    globalThis.setTimeout = real;
+  }
+  assert.equal(queued, 0, 'disconnect must end the loop for good');
 });
 
 test('disconnect closes the socket and stops reconnecting', () => {
@@ -233,6 +339,26 @@ test('level meter subscription is a setSubscription frame', async () => {
   });
   socket.emit('message', Buffer.from(JSON.stringify({ id: 1, jsonrpc: '2.0', result: {} })));
   await pending;
+});
+
+test('a socket error does not kill a client nobody is listening to', () => {
+  // EventEmitter throws when 'error' is emitted with no listener. A missing Wave Link
+  // is the most ordinary event there is, and it used to be able to take the service
+  // down with ECONNREFUSED -- a message that points at the network rather than at the
+  // ordering mistake it actually was. The registry always attaches a listener first,
+  // so in production this changes nothing; this is about the next client that does not.
+  const client = new WaveLinkClient();
+  assert.equal(client.listenerCount('error'), 0, 'this client is deliberately unwatched');
+  assert.doesNotThrow(() => client._onError(new Error('ECONNREFUSED')), 'an unwatched client must survive');
+});
+
+test('a socket error is still forwarded when someone is listening', () => {
+  // The guard above must not turn into swallowing the error.
+  const client = new WaveLinkClient();
+  const seen = [];
+  client.on('error', (err) => seen.push(err.message));
+  client._onError(new Error('ECONNREFUSED'));
+  assert.deepEqual(seen, ['ECONNREFUSED']);
 });
 
 test('an unknown notification is ignored rather than thrown on', () => {

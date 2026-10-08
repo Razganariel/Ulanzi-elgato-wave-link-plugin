@@ -1,0 +1,12 @@
+<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+  <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
+  <!-- Vertical fader track -->
+  <rect x="33" y="16" width="6" height="40" rx="3" fill="#333"/>
+  <!-- Fader knob, dimmed -->
+  <circle cx="36" cy="36" r="10" fill="#ef476f" stroke="#d63761" stroke-width="2"/>
+  <rect x="33" y="32" width="6" height="8" rx="2" fill="#d63761"/>
+  <!-- MIX label, kept grey so the dial still reads as a mix control -->
+  <text x="36" y="62" text-anchor="middle" font-size="10" font-weight="bold" fill="#666">MIX</text>
+  <!-- Mute slash: the knob is the bound scope, silenced -->
+  <path d="M17 55 L55 17" stroke="#ef476f" stroke-width="5" stroke-linecap="round"/>
+</svg>

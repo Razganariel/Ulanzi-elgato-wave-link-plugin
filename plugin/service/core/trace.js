@@ -10,7 +10,7 @@
  * Everything is best effort: tracing must never break the service.
  */
 
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -26,11 +26,29 @@ let target = null;
 try {
   // <plugin>/service/core -> <UlanziDeck>/logs
   const dir = join(HERE, '..', '..', '..', '..', 'logs');
-  mkdirSync(dir, { recursive: true });
   target = join(dir, 'com.ulanzi.ulanzistudio.wavelink.trace.log');
 } catch {
   target = null;
 }
+
+/**
+ * Whether anything is written, and why it is not by default.
+ *
+ * Set this to true to turn tracing back on; nothing else has to change.
+ *
+ * It is a switch rather than a commented-out call because tracing is threaded through
+ * thirteen call sites, five of them on the path every websocket frame takes. Commenting
+ * one call out would leave the rest in place and the file half-written, which is the
+ * worst of both worlds: a trace that exists and is not the whole truth. A named flag
+ * consulted at the top of trace() is one line, and it cannot be half-applied.
+ *
+ * The reason it is off: the host pushes state echoes several times a second, so a
+ * single eight-hour session filled three 8 MB generations, and the rotation itself does
+ * a stat and a rename per append. It stays in the tree because it is the only reliable
+ * way to tell "the host never sent anything" from "everything worked", and every
+ * connection problem in this plugin turned on it.
+ */
+export const TRACING = false;
 
 function stamp() {
   const d = new Date();
@@ -75,7 +93,8 @@ function rotate() {
 }
 
 export function trace(direction, data) {
-  if (!target) return;
+  // One check, on the path every frame takes. Everything below is the real cost.
+  if (!TRACING || !target) return;
   let text;
   if (typeof data === 'string') {
     try {
@@ -105,4 +124,11 @@ export function trace(direction, data) {
   }
 }
 
-export const tracePath = target;
+/**
+ * Where a trace would go, and whether anything will actually be written there.
+ *
+ * One export rather than a bare `tracePath`: a path on its own invites the caller to
+ * announce a file that nothing will ever create, which is what happened while tracing
+ * was off.
+ */
+export const tracing = { on: TRACING, path: target };

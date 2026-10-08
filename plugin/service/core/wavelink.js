@@ -24,7 +24,6 @@ const WS_INFO_PATHS = [
 const FALLBACK_PORTS = [1884, 1885, 1886, 1887, 1888, 1889, 1890, 1891, 1892, 1893];
 const ORIGIN = 'streamdeck://';
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 20000, 30000];
-const MAX_RECONNECT_ATTEMPTS = RECONNECT_DELAYS_MS.length;
 const CONNECT_TIMEOUT_MS = 5000;
 /** How many times a port that refuses the socket is looked up again. */
 const DISCOVERY_ATTEMPTS = 3;
@@ -47,6 +46,7 @@ export class WaveLinkClient extends EventEmitter {
     this.requestId = 0;
     this.pending = new Map();
     this.reconnectAttempt = 0;
+    this.reconnectPending = false;
     this.stopped = false;
     this.lastState = {
       channels: [],
@@ -316,17 +316,47 @@ export class WaveLinkClient extends EventEmitter {
 
   _onError(err) {
     wlLog(`WebSocket error: ${err.message}`);
-    this.emit('error', err);
+    // EventEmitter throws when 'error' is emitted with no listener, which would kill
+    // the service on a perfectly ordinary "Wave Link is not running". The registry
+    // binds its listener before anything here runs, so the guard changes nothing in
+    // production -- it is there for the day something instantiates a client without
+    // one, which otherwise fails as ECONNREFUSED and reads like a network fault
+    // rather than the ordering mistake it would be.
+    if (this.listenerCount('error') > 0) this.emit('error', err);
   }
 
+  /**
+   * Queues the next connection attempt, and keeps queueing them for as long as the
+   * client is not stopped.
+   *
+   * There used to be a ceiling of six attempts, spanning about 68 seconds. A plugin
+   * whose whole job is mirroring Wave Link onto the deck cannot afford to give up on
+   * a program that simply was not running yet: starting Wave Link after that window
+   * left the deck dead until the host itself was restarted. The delay stops growing
+   * at 30s, so the retry costs nothing but one socket attempt, and the only thing
+   * that ends the loop is disconnect() or the host closing the process.
+   */
   _scheduleReconnect() {
-    if (this.stopped || this.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) return;
-    const delay = RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
+    if (this.stopped || this.reconnectPending) return;
+    const capped = this.reconnectAttempt >= RECONNECT_DELAYS_MS.length - 1;
+    const wait = capped ? RECONNECT_DELAYS_MS[RECONNECT_DELAYS_MS.length - 1] : RECONNECT_DELAYS_MS[this.reconnectAttempt];
     this.reconnectAttempt++;
-    wlLog(`Scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempt})`);
+    if (!capped) {
+      wlLog(`Scheduling reconnect in ${wait}ms (attempt ${this.reconnectAttempt})`);
+    } else if (this.reconnectAttempt === RECONNECT_DELAYS_MS.length) {
+      // Announced once, then silent. Retrying every 30s is cheap; saying so every
+      // 30s for the rest of the session is not, and it buries anything else.
+      wlLog(`Wave Link still unreachable, retrying every ${wait}ms until it appears`);
+    }
+    this.reconnectPending = true;
     setTimeout(() => {
-      if (!this.stopped) this.connect();
-    }, delay);
+      this.reconnectPending = false;
+      if (this.stopped) return;
+      // connect() logs and emits its own failure, so the rejection is expected here.
+      // Left unhandled it surfaced as an uncaught exception, which reads like a bug
+      // in the plugin instead of the ordinary consequence of Wave Link being down.
+      this.connect().catch(() => {});
+    }, wait);
   }
 
   _send(payload) {
@@ -412,18 +442,6 @@ export class WaveLinkClient extends EventEmitter {
     }
     this.connected = false;
     this.connecting = false;
-  }
-
-  getState() {
-    // Callers redraw keys from this snapshot, so they must not be able to reach
-    // back into the cache through a shared array or channel object.
-    return {
-      ...this.lastState,
-      channels: this.lastState.channels.map((c) => ({ ...c, mixes: (c.mixes || []).map((m) => ({ ...m })) })),
-      mixes: this.lastState.mixes.map((m) => ({ ...m })),
-      inputDevices: [...(this.lastState.inputDevices || [])],
-      outputDevices: [...(this.lastState.outputDevices || [])],
-    };
   }
 
   getChannel(id) {

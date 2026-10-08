@@ -6,7 +6,7 @@
  * reach Wave Link should say so rather than look identical to one that can.
  */
 
-import { ACTION } from '../core/constants.js';
+import { ACTION, STATE } from '../core/constants.js';
 import { setStateIcon } from '../core/ui.js';
 
 export const uuid = ACTION.CONNECT;
@@ -17,7 +17,7 @@ export const binding = null;
 export const defaults = {};
 
 export function render({ $UD, context, snap }) {
-  setStateIcon($UD, context, 0, snap.connected ? 'ONLINE' : 'OFFLINE');
+  setStateIcon($UD, context, STATE.DEFAULT, snap.connected ? 'ONLINE' : 'OFFLINE');
 }
 
 export async function onRun({ registry, report }) {

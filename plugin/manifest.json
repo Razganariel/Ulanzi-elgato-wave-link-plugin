@@ -13,7 +13,7 @@
   "Actions": [
     {
       "Name": "Channel Mute",
-      "Icon": "images/action-channel-mute.svg",
+      "Icon": "images/action-channel-unmute.svg",
       "PropertyInspectorPath": "property-inspector/channel-mute/inspector.html",
       "Tooltip": "Mute a Wave Link channel, or only its junction in the selected mix",
       "UUID": "com.ulanzi.ulanzistudio.wavelink.channel-mute",
@@ -26,18 +26,18 @@
       ],
       "States": [
         {
-          "Name": "Muted",
-          "Image": "images/action-channel-mute.svg"
-        },
-        {
           "Name": "Unmuted",
           "Image": "images/action-channel-unmute.svg"
+        },
+        {
+          "Name": "Muted",
+          "Image": "images/action-channel-mute.svg"
         }
       ]
     },
     {
       "Name": "Channel Volume",
-      "Icon": "images/action-channel-volume-muted.svg",
+      "Icon": "images/action-channel-volume.svg",
       "PropertyInspectorPath": "property-inspector/channel-volume/inspector.html",
       "Tooltip": "Dial: rotate to adjust the channel level, press to toggle its mute. A selected mix scopes both to that junction",
       "UUID": "com.ulanzi.ulanzistudio.wavelink.channel-volume",
@@ -51,12 +51,12 @@
       },
       "States": [
         {
-          "Name": "Muted",
-          "Image": "images/action-channel-volume-muted.svg"
-        },
-        {
           "Name": "Unmuted",
           "Image": "images/action-channel-volume.svg"
+        },
+        {
+          "Name": "Muted",
+          "Image": "images/action-channel-volume-muted.svg"
         }
       ]
     },
@@ -112,14 +112,18 @@
       },
       "States": [
         {
-          "Name": "Mix Volume",
+          "Name": "Unmuted",
           "Image": "images/action-mix-volume.svg"
+        },
+        {
+          "Name": "Muted",
+          "Image": "images/action-mix-volume-muted.svg"
         }
       ]
     },
     {
       "Name": "Mix Mute",
-      "Icon": "images/action-mix-mute.svg",
+      "Icon": "images/action-mix-unmute.svg",
       "PropertyInspectorPath": "property-inspector/mix-mute/inspector.html",
       "Tooltip": "Toggle mute for a Wave Link mix (Stream Mix / Monitor Mix)",
       "UUID": "com.ulanzi.ulanzistudio.wavelink.mix-mute",
@@ -132,12 +136,12 @@
       ],
       "States": [
         {
-          "Name": "Muted",
-          "Image": "images/action-mix-mute.svg"
-        },
-        {
           "Name": "Unmuted",
           "Image": "images/action-mix-unmute.svg"
+        },
+        {
+          "Name": "Muted",
+          "Image": "images/action-mix-mute.svg"
         }
       ]
     },

@@ -33,7 +33,10 @@ import * as mixVolume from '../plugin/service/actions/mix-volume.js';
 import * as mixMute from '../plugin/service/actions/mix-mute.js';
 import * as connect from '../plugin/service/actions/connect.js';
 import { ACTION, ENCODER_ICON, STATE, VOLUME_STEPS } from '../plugin/service/core/constants.js';
+import { volumeBounds } from '../plugin/service/core/params.js';
 import { forgetHostDisplay, pruneHostDisplay } from '../plugin/service/core/ui.js';
+import { jsCode } from './helpers.js';
+import { trace, tracing } from '../plugin/service/core/trace.js';
 
 const manifest = JSON.parse(readFileSync(new URL('../plugin/manifest.json', import.meta.url), 'utf8'));
 const actionOf = (uuid) => manifest.Actions.find((a) => a.UUID === uuid);
@@ -55,6 +58,7 @@ function recordingRegistry() {
       calls.push(['setChannel', id, mixId ? { mixes: [{ id: mixId, level }] } : { level }]),
     toggleChannelMute: (id, mixId) => calls.push(['toggleChannelMute', id, mixId]),
     setMixMute: (id, muted) => calls.push(['setMix', id, { isMuted: muted }]),
+    setMixVolume: (id, level) => calls.push(['setMix', id, { level }]),
     toggleMixMute: (id) => calls.push(['toggleMixMute', id]),
   };
 }
@@ -120,31 +124,60 @@ test('every action draws a real icon as its first state', () => {
 });
 
 test('only the actions that can mute declare a second state', () => {
-  // A second state is only worth having when the action can change it: the two mute
-  // buttons, and the Channel Volume dial, whose press now mutes the bound scope.
-  for (const action of manifest.Actions) {
-    const expected = action.UUID.startsWith('com.ulanzi.ulanzistudio.wavelink.mix-mute')
-      || action.UUID === 'com.ulanzi.ulanzistudio.wavelink.channel-mute'
-      || action.UUID === 'com.ulanzi.ulanzistudio.wavelink.channel-volume'
-      ? 2
-      : 1;
+  // A second state is only worth having when a press can change it. Every action whose
+  // press toggles a mute therefore needs one, dial or button: Channel Mute and Mix
+  // Mute, and the two volume dials, whose press mutes the bound scope.
+  //
+  // Mix Volume was left out of this list, and with a single state and an icon that
+  // never changed, its press muted the mix in complete silence. The test encoded the
+  // defect, so the rule is now stated by what a press does rather than by a list of
+  // action names that has to be updated by hand.
+  for (const mod of [...DIALS, ...MUTES]) {
     assert.equal(
-      action.States.length,
-      expected,
-      `${action.Name} declares ${expected} state(s)`
+      actionOf(mod.uuid).States.length,
+      2,
+      `${mod.uuid} can mute on a press, so it must declare a Muted and an Unmuted state`
+    );
+  }
+  for (const mod of BUTTONS) {
+    assert.equal(
+      actionOf(mod.uuid).States.length,
+      1,
+      `${mod.uuid} only nudges or connects, so a second state would never be reached`
     );
   }
 });
 
-test('the mute states follow STATE.MUTED and look different from each other', () => {
-  // STATE.MUTED is 0, so "Muted" has to be the first state for the shared index to
-  // point at the right image in every action.
-  for (const mod of [channelMute, mixMute, channelVolume]) {
-    const [muted, unmuted] = actionOf(mod.uuid).States;
+test('the mute states follow STATE.MUTED and the action icon is its resting face', () => {
+  // The host paints state 0 for a key the plugin has not answered, so state 0 is what
+  // the key should look like at rest -- and nothing pressed is unmuted. The icon an
+  // action shows in the list is that same face; it used to be the muted one, which made
+  // the list show a slashed fader for the actions that could mute and a plain one for
+  // those that could not, with no reason behind the difference.
+  for (const mod of [channelMute, mixMute, channelVolume, mixVolume]) {
+    const declared = actionOf(mod.uuid).States;
+    const muted = declared[STATE.MUTED];
+    const unmuted = declared[STATE.UNMUTED];
     assert.equal(muted.Name, 'Muted', `${mod.uuid} state ${STATE.MUTED} is Muted`);
     assert.equal(unmuted.Name, 'Unmuted', `${mod.uuid} state ${STATE.UNMUTED} is Unmuted`);
-    assert.equal(muted.Image, actionOf(mod.uuid).Icon, `${mod.uuid} state 0 is its own icon`);
     assert.notEqual(unmuted.Image, muted.Image, `${mod.uuid} must look different when muted`);
+    assert.equal(
+      actionOf(mod.uuid).Icon,
+      unmuted.Image,
+      `${mod.uuid} shows its resting face in the action list`
+    );
+    // State 0 is the fallback for a key the plugin never painted, so it has to be that
+    // same resting face rather than the muted one.
+    assert.equal(
+      declared[0].Image,
+      actionOf(mod.uuid).Icon,
+      `${mod.uuid} falls back to its own icon before the plugin answers`
+    );
+  }
+
+  // And the actions that cannot mute have only that one face, so it is theirs too.
+  for (const mod of BUTTONS) {
+    assert.equal(actionOf(mod.uuid).Icon, actionOf(mod.uuid).States[0].Image, `${mod.uuid} has a single state`);
   }
 });
 
@@ -344,30 +377,28 @@ test('no icon carries a live level', () => {
   }
 });
 
-test('only the mute actions change icon, and only with the mute state', () => {
-  // They are the only ones with a second state declared in the manifest, so they are
-  // the only ones that can report a mute change visually.
-  for (const [mod, subject, other, muted] of [
-    [channelMute, channel({ isMuted: true }), mix(), STATE.MUTED],
-    [mixMute, channel(), mix({ isMuted: true }), STATE.MUTED],
+test('every action that can mute shows it, and the others stay put', () => {
+  // Mix Volume used to sit with the single-state actions despite toggling a mute,
+  // which left its press silent on the deck. Note that DEFAULT and MUTED are both 0,
+  // so a test that only ever checked "state 0" could not have told the two apart.
+  //
+  // Whatever the action is bound to, the mute it can toggle has to reach the key.
+  for (const [mod, mutedCtx, unmutedCtx] of [
+    [channelMute, { channel: channel({ isMuted: true }) }, { channel: channel() }],
+    [mixMute, { mix: mix({ isMuted: true }) }, { mix: mix() }],
+    [channelVolume, { channel: channel({ isMuted: true }) }, { channel: channel() }],
+    [mixVolume, { mix: mix({ isMuted: true }) }, { mix: mix() }],
   ]) {
-    const on = draw(mod, { channel: subject, mix: other }).find((c) => c[0] === 'state');
-    assert.equal(on[1], muted, `${mod.uuid} shows the muted icon`);
-    const off = draw(mod, {
-      channel: { ...subject, isMuted: false },
-      mix: { ...other, isMuted: false },
-    }).find((c) => c[0] === 'state');
+    const on = draw(mod, mutedCtx).find((c) => c[0] === 'state');
+    assert.equal(on[1], STATE.MUTED, `${mod.uuid} shows the muted icon`);
+    const off = draw(mod, unmutedCtx).find((c) => c[0] === 'state');
     assert.equal(off[1], STATE.UNMUTED, `${mod.uuid} and the unmuted one`);
   }
 
-  for (const [mod, subject, other] of [
-    [channelVolume, channel({ isMuted: true }), mix()],
-    [mixVolume, channel(), mix({ isMuted: true })],
-    [channelVolumeUp, channel({ isMuted: true }), mix()],
-    [channelVolumeDown, channel({ isMuted: true }), mix()],
-  ]) {
-    const on = draw(mod, { channel: subject, mix: other }).find((c) => c[0] === 'state');
-    assert.equal(on[1], STATE.DEFAULT, `${mod.uuid} declares one state and stays on it`);
+  for (const mod of [channelVolumeUp, channelVolumeDown, connect]) {
+    const drawn = draw(mod, { channel: channel({ isMuted: true }), mix: mix({ isMuted: true }) })
+      .find((c) => c[0] === 'state');
+    assert.equal(drawn[1], STATE.DEFAULT, `${mod.uuid} declares one state and stays on it`);
   }
 });
 
@@ -489,6 +520,130 @@ test('pruning never forgets a context that is still live', () => {
   assert.equal(paint(), 0, 'the live key keeps its remembered label');
 });
 
+test('the service carries none of the paths that were removed', () => {
+  // Each of these was reachable, written, and did nothing. They are listed so that
+  // nobody restores them: a reader who finds an unused handler assumes it is a feature
+  // someone is relying on.
+  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+
+  // A global-settings feature that read the host's own Config/global_settings.json --
+  // another program's internal file -- and then used none of it. Nothing ever called the
+  // save side, so nothing was ever written either.
+  for (const gone of ['globalSettings', 'setGlobalSettings', 'getGlobalSettings', 'onDidReceiveGlobalSettings']) {
+    assert.doesNotMatch(service, new RegExp(gone), `${gone} was a no-op feature`);
+  }
+
+  // Per-setting messages that no panel has ever sent. git confirms they never appeared
+  // in a property inspector: set-settings has always been the only write path, and it
+  // merges rather than replaces, which these two did not.
+  assert.doesNotMatch(service, /set-channel/, 'no panel sends it');
+  assert.doesNotMatch(service, /set-mix/, 'no panel sends it');
+
+  // handlerContext().connect was a second way to reach the registry that no action used;
+  // the Connect action calls registry.connect() itself.
+  assert.doesNotMatch(service, /connect: async/, 'ctx.connect had no caller');
+
+  // The transport handed out a defensive deep copy that nothing ever asked for, while
+  // the copy that does matter -- the one app.js makes before attaching a registry -- is
+  // asserted in the registry tests.
+  const transport = readFileSync(new URL('../plugin/service/core/wavelink.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(transport, /getState\(\)/, 'getState had no caller');
+});
+
+test('a notification repaints the deck in one pass, not one pass per key', () => {
+  // refreshAll used to call refresh(ctx) per entry, and refresh() walked every context
+  // and reconciled both caches before painting its one key. A single notification about
+  // one channel therefore walked the whole deck once per key on it -- quadratic, on the
+  // path Wave Link takes several times a second while a knob turns.
+  //
+  // Asserted on the shape rather than on a measurement: app.js connects to the host the
+  // moment it is imported, so it cannot be loaded here, and a stopwatch in a unit test
+  // would prove nothing about complexity anyway.
+  const service = jsCode('service/app.js');
+  const block = service.slice(service.indexOf('function refreshAll('));
+  const body = block.slice(0, block.indexOf('\n}') + 2);
+
+  assert.match(body, /pruneCaches\(\)/, 'the caches are reconciled once');
+  assert.doesNotMatch(
+    body,
+    /refresh\(/,
+    'not once per key, which is what made it quadratic'
+  );
+  assert.match(body, /paint\(ctx, entry\)/, 'the loop paints directly');
+  // And the work it delegates has to exist.
+  assert.match(service, /function paint\(ctx, entry, options\)/);
+  assert.match(service, /function pruneCaches\(\)/);
+  assert.doesNotMatch(
+    service,
+    /function paint[\s\S]*?function paint\(/,
+    'paint is defined once'
+  );
+});
+
+test('the bound channel is copied before the registry is attached to it', () => {
+  // app.js cannot be imported by a test -- it connects to the host on load -- so this is
+  // asserted on the source. It matters because the copy is the only thing standing
+  // between an action and the transport's own state: a registry on the cached object
+  // would also make JSON.stringify throw, which is how the inspector payload is built,
+  // and the panel would come up with a blank select and no error to trace it.
+  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+  for (const fn of ['boundChannel', 'boundMix']) {
+    const body = service.slice(service.indexOf(`function ${fn}(`));
+    const block = body.slice(0, body.indexOf('\n}'));
+    assert.match(
+      block,
+      /\.\.\.\w+, registry: waveLinkRegistry/,
+      `${fn} must return a copy carrying the registry, not the cached object`
+    );
+  }
+});
+
+test('tracing is switched off, and switching it on is one line', () => {
+  // Traced on, the host pushes state echoes several times a second and a session fills
+  // three 8 MB generations -- and rotation costs a stat and a rename per append. It is
+  // off by default and it stays in the tree, because it is the only reliable way to tell
+  // "the host never sent anything" from "everything worked".
+  //
+  // The test is about the mechanism, not the value: whoever re-enables it for a session
+  // must not have to touch a test.
+  const source = jsCode('service/core/trace.js');
+
+  assert.match(source, /export const TRACING = (?:true|false);/, 'the switch is one named constant');
+  assert.match(
+    source,
+    /if \(!TRACING \|\| !target\) return;/,
+    'and trace() consults it before doing anything'
+  );
+
+  // One switch, not thirteen commented-out call sites. Commenting a call would leave a
+  // half-written file: it exists, it rotates, and it is not the whole truth.
+  const service = jsCode('service/app.js');
+  assert.match(service, /import \{ trace, tracing \}/, 'the service reads the switch, not a bare path');
+  assert.doesNotMatch(service, /tracePath/, 'and never a path it could announce but not write');
+  assert.match(service, /tracing\.on/, 'the state of tracing is stated in the host log');
+});
+
+test('tracing writes nothing while it is off', () => {
+  assert.equal(typeof trace, 'function');
+  // Whatever the value of the switch, calling it must never throw: it sits on the path
+  // of every websocket frame, and an exception there would take the service down.
+  assert.doesNotThrow(() => trace('TEST', { hello: 'world' }));
+  assert.ok(tracing.path, 'it still knows where it would write, so the host log can say so');
+});
+
+test('the service reports an unhandled rejection as such', () => {
+  // Node raises an unhandled rejection as an uncaught exception, so without this
+  // handler the two are the same line in the log. A stray promise then reads as a
+  // crash of the plugin rather than as the stray promise it is, which sends the
+  // reader hunting for a bug that does not exist.
+  //
+  // The service connects to the host the moment it is imported, so it cannot be
+  // loaded here; its process-level wiring is asserted on the source, as elsewhere.
+  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+  assert.match(service, /process\.on\('unhandledRejection'/, 'the service must handle rejections');
+  assert.match(service, /process\.on\('uncaughtException'/, 'and keep handling exceptions');
+});
+
 test('selecting a key must not rewrite the encoder layout', () => {
   // Selecting a key in Ulanzi Studio fires setActive and then paramfromapp, and the
   // host replays the stored settings with it. Clearing the icon cache on either one
@@ -536,6 +691,67 @@ test('pressing a channel dial toggles the scope it is bound to', async () => {
 
   assert.deepEqual(await press(channelVolume, ''), [['toggleChannelMute', 'ch1', null]]);
   assert.deepEqual(await press(channelVolume, 'mix1'), [['toggleChannelMute', 'ch1', 'mix1']]);
+});
+
+test('every volume action refuses to leave the range it was given', async () => {
+  // The range belongs to the action, not to the channel: settings are stored per key,
+  // so the + and - buttons could never have read the min/max a dial was configured
+  // with. They clamped to 0..1 instead, and a channel the user had capped at 0.8 on
+  // one key could be walked straight past that cap from another.
+  const levelOf = (call) => call[2].mixes ? call[2].mixes[0].level : call[2].level;
+
+  const actions = [
+    ['channel-volume', channelVolume, { channelId: 'ch1', mixId: '' }, { registry: null }],
+    ['channel-volume-up', channelVolumeUp, { channelId: 'ch1', mixId: '' }, { registry: null }],
+    ['channel-volume-down', channelVolumeDown, { channelId: 'ch1', mixId: '' }, { registry: null }],
+  ];
+
+  for (const [name, mod, base, extra] of actions) {
+    for (const [from, dir] of [[0.79, 1], [0.21, -1]]) {
+      const registry = recordingRegistry();
+      const ctx = {
+        settings: { step: '0.05', min: '0.2', max: '0.8', ...base },
+        channel: { ...channel({ level: from }), registry },
+        mix: mix(),
+        report: (e) => assert.fail(`${name} reported ${e.message}`),
+        ...extra,
+      };
+      if (mod.onRun) await mod.onRun(ctx);
+      else await mod.onDialRotate(ctx, { rotateEvent: dir > 0 ? 'right' : 'left' });
+
+      const [call] = registry.calls;
+      const level = levelOf(call);
+      assert.ok(
+        level >= 0.2 && level <= 0.8,
+        `${name} left its 0.2-0.8 range, asking for ${level}`
+      );
+    }
+  }
+
+  // And the mix dial, which carries the same controls.
+  const registry = recordingRegistry();
+  await mixVolume.onDialRotate(
+    {
+      settings: { step: '0.05', min: '0.3', max: '0.6', mixId: 'mix1' },
+      mix: { ...mix({ level: 0.59 }), registry },
+      report: (e) => assert.fail(`mix-volume reported ${e.message}`),
+    },
+    { rotateEvent: 'right' }
+  );
+  assert.ok(levelOf(registry.calls[0]) <= 0.6, 'the mix dial left its own range');
+});
+
+test('a range that no step can satisfy still leaves one usable level', () => {
+  // An inverted pair, which a number field allows: Min 0.9, Max 0.1. Clamped to a
+  // single level rather than to a range no step could fit into.
+  const bounds = volumeBounds({ min: '0.9', max: '0.1' });
+  assert.equal(bounds.min, 0.9);
+  assert.equal(bounds.max, 0.9);
+});
+
+test('a volume action defaults to the full range when it has none', () => {
+  assert.deepEqual(volumeBounds({}), { min: 0, max: 1 });
+  assert.deepEqual(volumeBounds({ min: '', max: '' }), { min: 0, max: 1 }, 'a cleared field is not zero');
 });
 
 test('the Channel Mute button targets the same scope as the dial', async () => {
@@ -623,25 +839,30 @@ test('an encoder draws its icon from the feedback layout, and the paths exist', 
   }
 });
 
-test('the dial follows the mute with its own icon', () => {
-  const context = 'ctx-dial-icon';
-  const paint = (isMuted) => {
-    const $UD = fakeUD();
-    channelVolume.render({
-      $UD,
-      context,
-      snap: {},
-      isEncoder: true,
-      settings: { mixId: '' },
-      channel: channel({ isMuted }),
-      mix: mix(),
-    });
-    return $UD.sent.filter((c) => c[0] === 'feedback').length;
-  };
-  assert.equal(paint(false), 1, 'the dial is drawn with the unmuted icon');
-  assert.equal(paint(false), 0, 'and not redrawn for nothing');
-  assert.equal(paint(true), 1, 'muting redraws it, icon included');
-  assert.equal(paint(true), 0);
+test('each dial follows the mute with its own icon', () => {
+  // Both volume dials toggle a mute when pressed, so both have to show it. The Mix
+  // Volume dial declared a single state and always drew the same icon, so its press
+  // muted the mix with nothing at all on the deck to say that it had.
+  const cases = [
+    [channelVolume, (isMuted) => ({ settings: { mixId: '' }, channel: channel({ isMuted }) })],
+    [mixVolume, (isMuted) => ({ settings: { mixId: '' }, mix: mix({ isMuted }) })],
+  ];
+
+  for (const [mod, contextFor] of cases) {
+    // A context of its own, because the encoder cache is keyed by context and is
+    // shared between the two dials.
+    const context = `ctx-dial-icon-${mod.uuid.split('.').pop()}`;
+    const paint = (isMuted) => {
+      const $UD = fakeUD();
+      mod.render({ $UD, context, snap: {}, isEncoder: true, ...contextFor(isMuted) });
+      return $UD.sent.filter((c) => c[0] === 'feedback').length;
+    };
+
+    assert.equal(paint(false), 1, `${mod.uuid} draws the dial with the unmuted icon`);
+    assert.equal(paint(false), 0, `${mod.uuid} does not redraw it for nothing`);
+    assert.equal(paint(true), 1, `${mod.uuid} redraws it when the mute changes`);
+    assert.equal(paint(true), 0, `${mod.uuid} and settles again`);
+  }
 });
 
 test('every action uuid is the manifest uuid plus its short name', () => {

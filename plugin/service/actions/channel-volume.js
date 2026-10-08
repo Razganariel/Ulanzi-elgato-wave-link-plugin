@@ -7,8 +7,12 @@
  *    Title field, and it repaints the key whenever it sees fit. This module never
  *    publishes a title, never publishes a level, and never asks for a redraw it does
  *    not need.
- *  - The dial is the one thing the host does not own, so the plugin fills it once
- *    with the name of whatever it is bound to. It changes only when the binding does.
+ *  - The dial's text is the host's too: the Title field covers the key and its dial
+ *    alike. The one thing we draw there is the icon, which follows the mute of the
+ *    bound scope -- the same state a press toggles, so the two cannot disagree. An
+ *    earlier version filled the layout's title with the name of the bound channel or
+ *    mix; it fought the host for the field and lost the user's typing every time the
+ *    key was repainted.
  *  - Wave Link notifies on every level change, several times a second while a knob
  *    turns. None of that is worth drawing: the fader already shows the level.
  *
@@ -24,7 +28,8 @@
 
 import { ACTION, ENCODER_ICON, LIMITS, STATE, VOLUME_STEPS } from '../core/constants.js';
 import { rotateSteps } from '../core/dial.js';
-import { clampFloat, dialStep } from '../core/params.js';
+import { scopeLevel, scopeMuted } from '../core/scope.js';
+import { clampFloat, dialStep, volumeBounds } from '../core/params.js';
 import { setEncoderIcon, setStateIcon } from '../core/ui.js';
 
 export const uuid = ACTION.CHANNEL_VOLUME;
@@ -38,20 +43,6 @@ export const defaults = {
   step: LIMITS.VOLUME_STEP,
 };
 
-function bounds(settings) {
-  const min = clampFloat(settings.min ?? LIMITS.VOLUME_MIN, LIMITS.VOLUME_MIN, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MIN);
-  const max = clampFloat(settings.max ?? LIMITS.VOLUME_MAX, min, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MAX);
-  return { min, max };
-}
-
-function currentLevel(channel, mixId) {
-  if (!channel) return 0;
-  if (mixId) {
-    const mix = channel.mixes?.find((m) => m.id === mixId);
-    return mix?.level ?? channel.level;
-  }
-  return channel.level;
-}
 
 /**
  * Draws the key and the dial. The icon shows the mute of the bound scope, which is
@@ -60,9 +51,7 @@ function currentLevel(channel, mixId) {
  */
 export function render({ $UD, context, channel, isEncoder, settings }) {
   const mixId = settings.mixId || null;
-  const muted = mixId
-    ? Boolean(channel?.mixes?.find((m) => m.id === mixId)?.isMuted)
-    : Boolean(channel?.isMuted);
+  const muted = scopeMuted(channel, mixId);
   setStateIcon($UD, context, muted ? STATE.MUTED : STATE.UNMUTED);
   if (isEncoder) {
     // The dial's text is the host's Title; the only thing we draw there is the icon,
@@ -76,9 +65,9 @@ export async function onDialRotate(ctx, message) {
   if (!channel) return;
   const direction = rotateSteps(message);
   if (direction === 0) return;
-  const { min, max } = bounds(settings);
+  const { min, max } = volumeBounds(settings);
   const step = dialStep(settings.step, 0.01, max - min, defaults.step, VOLUME_STEPS);
-  const level = currentLevel(channel, settings.mixId);
+  const level = scopeLevel(channel, settings.mixId);
   const next = clampFloat(level + direction * step, min, max, level);
   try {
     await channel.registry.setChannelVolume(channel.id, next, settings.mixId || null);
