@@ -1,7 +1,8 @@
 /**
  * Host UI helpers. The encoder display commands (setFeedbackLayout / setFeedback)
- * need UlanziStudio 3.3.0+; on older hosts they must not break the classic state
- * icon, so every call is individually guarded.
+ * need UlanziStudio 3.3.0+, which is why the manifest still declares 3.0.11: on an older
+ * host the calls throw, are caught, and what is lost is the dial's icon, not the action.
+ * A dial then shows no mute state of its own, while the key beside it still does.
  *
  * Everything the plugin draws is remembered per context and re-sent only when it
  * actually differs. Wave Link notifies on every level change, so the repaint path

@@ -55,7 +55,7 @@
   // Bump when the behaviour below changes: the inspector WebView caches this file
   // while re-reading the HTML, so the version is the only way to tell from the
   // service log which copy of this script a panel is actually running.
-  const PI_VERSION = 6;
+  const PI_VERSION = 7;
 
   /**
    * Reports the form's actual contents to the service whenever they change,
@@ -115,10 +115,8 @@
       if (skip) {
         const { [skip]: _held, ...rest } = applied;
         applied = rest;
-        Utils.setFormValue(applied, form);
-      } else {
-        Utils.setFormValue(applied, form);
       }
+      Utils.setFormValue(applied, form);
       // Some controls (a select, notably) need their value applied after hydration,
       // not just the fields the form knows how to draw. They are told about the fields
       // that were actually applied, not about the whole incoming set: the one the user
