@@ -185,15 +185,23 @@ test('the pickers are built in one place, with one wording', () => {
 });
 
 /**
- * Boots shared.js far enough to exercise bootForm, with a recording $UD and a real
- * form, so the hydration path can be driven without a WebView.
+ * Runs shared.js and boots a form, returning the pieces a test needs to drive it.
+ *
+ * The file is an IIFE that reaches for `$UD` and `Utils` only from inside its functions,
+ * so a sandbox is enough to run it. That buys behavioural tests of the hydration path
+ * rather than assertions about its source -- which matters, because two checks written
+ * as source scans were answering "is this line still there" instead of "does the panel
+ * behave", and a line can move without the behaviour changing.
  */
-function bootShared() {
+function bootShared(options = {}) {
   const source = read('property-inspector/shared.js');
   const sent = [];
+  const applied = [];
+  const handlers = {};
   const form = fakeNode('form');
   form.addEventListener = () => {};
   form.querySelector = () => null;
+
   const window = { addEventListener() {}, PI: null };
   const document = {
     activeElement: null,
@@ -201,46 +209,87 @@ function bootShared() {
     getElementById: () => null,
     querySelector: () => form,
     createElement: () => fakeNode('div'),
-    body: { appendChild() {} },
+    // connect() reads the action id off the body, as the real panel's markup carries it.
+    body: { dataset: {}, appendChild() {} },
   };
   const $UD = {
     connect() {},
     sendToPlugin(payload) { sent.push(payload); },
-    onParamFromApp() {},
-    onDidReceiveSettings() {},
-    onSendToPropertyInspector() {},
+    onParamFromApp(fn) { handlers.param = fn; },
+    onDidReceiveSettings(fn) { handlers.settings = fn; },
+    onSendToPropertyInspector(fn) { handlers.toPanel = fn; },
     on() {},
   };
-  const Utils = { debounce: (fn) => fn, getFormValue: () => ({}), setFormValue() {} };
+  const Utils = {
+    debounce: (fn) => fn,
+    getFormValue: () => ({ channelId: 'ch1', mixId: '' }),
+    setFormValue: (settings) => applied.push({ ...settings }),
+  };
+
   vm.runInNewContext(source, { window, document, console, $UD, Utils, setTimeout });
-  window.PI.bootForm(form, {});
-  return { sent, form };
+  window.PI.boot('#property-inspector', options);
+
+  return {
+    sent,
+    applied,
+    document,
+    /** Simulates the host replaying its stored settings for a key. */
+    replay: (settings) => handlers.param({ param: settings }),
+    /** Puts the caret in a field, as a user typing into it would. */
+    focus: (name) => {
+      document.activeElement = { form, name };
+    },
+  };
 }
 
+test('a field the user is in is left alone, and told apart from the rest', () => {
+  // The host replays its stored settings on every open. Writing those over a field the
+  // user is still typing in wipes half-typed text, so the focused control is skipped --
+  // and the hook is handed the fields that were actually applied, not the whole
+  // incoming set. A hook given the whole set would put that value straight back under
+  // the user's cursor, which is the thing being avoided here.
+  const hooked = [];
+  const panel = bootShared({ onSettings: (settings) => hooked.push({ ...settings }) });
+
+  panel.focus('channelId');
+  panel.replay({ channelId: 'stored', mixId: 'mix2' });
+
+  assert.deepEqual(panel.applied, [{ mixId: 'mix2' }], 'the focused field is not written over');
+  assert.deepEqual(hooked, [{ mixId: 'mix2' }], 'and the hook is told what was applied');
+  assert.equal(hooked[0].channelId, undefined, 'the field under the user is absent, not restored');
+});
+
+test('with nothing in focus, everything is applied', () => {
+  const hooked = [];
+  const panel = bootShared({ onSettings: (settings) => hooked.push({ ...settings }) });
+
+  panel.replay({ channelId: 'stored', mixId: 'mix2' });
+
+  assert.deepEqual(panel.applied, [{ channelId: 'stored', mixId: 'mix2' }]);
+  assert.deepEqual(hooked, [{ channelId: 'stored', mixId: 'mix2' }], 'the hook sees the whole set');
+});
+
 test('replayed settings do not make the panel write back for nothing', () => {
-  // The host replays its stored settings on every key selection. Forcing a re-report
-  // each time meant every click on the deck produced a pi-form back to the service --
-  // a form that had not changed, logged, for nothing. reportForm compares on its own,
-  // so the only thing to check is that the cache is no longer thrown away first.
-  const shared = code('property-inspector/shared.js');
-  const body = shared.slice(shared.indexOf('const applySettings'));
-  const block = body.slice(0, body.indexOf('});') + 3);
-  assert.doesNotMatch(
-    block,
-    /lastReported = null/,
-    'a forced re-report makes every settings replay write back to the service'
+  // The host replays on every key selection. Forcing a re-report each time meant every
+  // click on the deck produced a pi-form back to the service, describing a form that had
+  // not changed. reportForm compares on its own, so replaying has to leave it alone.
+  const panel = bootShared();
+
+  panel.replay({ channelId: 'stored' });
+  const afterFirst = panel.sent.filter((p) => p.event === 'pi-form').length;
+  panel.replay({ channelId: 'stored' });
+  panel.replay({ channelId: 'stored' });
+
+  assert.equal(
+    panel.sent.filter((p) => p.event === 'pi-form').length,
+    afterFirst,
+    'an unchanged replay must not produce another report'
   );
 });
 
 test('the settings hook is told what was applied, not what was held', () => {
-  // A hook handed the whole incoming set would put the focused control's value back
-  // under the user's cursor -- the exact thing the skip is there to prevent. The hook
-  // receives the fields that were actually applied.
   const shared = code('property-inspector/shared.js');
-  const body = shared.slice(shared.indexOf('const applySettings'));
-  const block = body.slice(0, body.indexOf('});') + 3);
-  assert.match(block, /options\.onSettings\(applied\)/, 'the hook takes the applied set');
-  assert.doesNotMatch(block, /options\.onSettings\(settings/, 'never the whole incoming set');
+  assert.doesNotMatch(shared, /options\.onSettings\(settings/, 'never the whole incoming set');
 });
 
 test('the connect panel has one listener, not two', () => {
@@ -319,6 +368,9 @@ function fakeNode(tag) {
   return {
     tag,
     value: '',
+    // The error banner shared.js raises writes here, so a node without it turns a real
+    // failure into a confusing "cannot set properties of undefined".
+    style: {},
     _text: '',
     children: [],
     get textContent() { return this._text; },
