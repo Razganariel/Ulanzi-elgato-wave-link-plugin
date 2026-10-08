@@ -71,18 +71,18 @@ export function forgetHostDisplay(context) {
   lastStateIcon.delete(context);
 }
 
-/**
- * Drops every remembered label whose context is no longer live.
- *
- * The cache is keyed by context, and contexts do not disappear one at a time:
- * forgetting a key purges the whole slot, which can hold several instances of the
- * same action, and moving an action drops its previous context. Forgetting only the
- * one context named in the event left the others behind, so the map grew for the
- * whole session and a context that came back could be wrongly believed to already
- * carry its label. Reconciling against the live set is complete by construction and
- * costs one pass over a handful of keys.
- *
- * @param {Iterable<string>} liveContexts
+  /**
+   * Drops every icon this cache remembers whose context is no longer live.
+   *
+   * The cache is keyed by context, and contexts do not disappear one at a time:
+   * forgetting a key purges the whole slot, which can hold several instances of the
+   * same action, and moving an action drops its previous context. Forgetting only the
+   * one context named in the event left the others behind, so the map grew for the
+   * whole session and a context that came back could be wrongly believed to already
+   * carry its icon. Reconciling against the live set is complete by construction and
+   * costs one pass over a handful of keys.
+   *
+   * @param {Iterable<string>} liveContexts
  */
 export function pruneHostDisplay(liveContexts) {
   for (const context of [...lastEncoderIcon.keys()]) {

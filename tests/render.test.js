@@ -35,6 +35,7 @@ import * as connect from '../plugin/service/actions/connect.js';
 import { ACTION, ENCODER_ICON, STATE, VOLUME_STEPS } from '../plugin/service/core/constants.js';
 import { volumeBounds } from '../plugin/service/core/params.js';
 import { forgetHostDisplay, pruneHostDisplay } from '../plugin/service/core/ui.js';
+import { jsCode } from './helpers.js';
 
 const manifest = JSON.parse(readFileSync(new URL('../plugin/manifest.json', import.meta.url), 'utf8'));
 const actionOf = (uuid) => manifest.Actions.find((a) => a.UUID === uuid);
@@ -146,15 +147,36 @@ test('only the actions that can mute declare a second state', () => {
   }
 });
 
-test('the mute states follow STATE.MUTED and look different from each other', () => {
-  // STATE.MUTED is 0, so "Muted" has to be the first state for the shared index to
-  // point at the right image in every action.
+test('the mute states follow STATE.MUTED and the action icon is its resting face', () => {
+  // The host paints state 0 for a key the plugin has not answered, so state 0 is what
+  // the key should look like at rest -- and nothing pressed is unmuted. The icon an
+  // action shows in the list is that same face; it used to be the muted one, which made
+  // the list show a slashed fader for the actions that could mute and a plain one for
+  // those that could not, with no reason behind the difference.
   for (const mod of [channelMute, mixMute, channelVolume, mixVolume]) {
-    const [muted, unmuted] = actionOf(mod.uuid).States;
+    const declared = actionOf(mod.uuid).States;
+    const muted = declared[STATE.MUTED];
+    const unmuted = declared[STATE.UNMUTED];
     assert.equal(muted.Name, 'Muted', `${mod.uuid} state ${STATE.MUTED} is Muted`);
     assert.equal(unmuted.Name, 'Unmuted', `${mod.uuid} state ${STATE.UNMUTED} is Unmuted`);
-    assert.equal(muted.Image, actionOf(mod.uuid).Icon, `${mod.uuid} state 0 is its own icon`);
     assert.notEqual(unmuted.Image, muted.Image, `${mod.uuid} must look different when muted`);
+    assert.equal(
+      actionOf(mod.uuid).Icon,
+      unmuted.Image,
+      `${mod.uuid} shows its resting face in the action list`
+    );
+    // State 0 is the fallback for a key the plugin never painted, so it has to be that
+    // same resting face rather than the muted one.
+    assert.equal(
+      declared[0].Image,
+      actionOf(mod.uuid).Icon,
+      `${mod.uuid} falls back to its own icon before the plugin answers`
+    );
+  }
+
+  // And the actions that cannot mute have only that one face, so it is theirs too.
+  for (const mod of BUTTONS) {
+    assert.equal(actionOf(mod.uuid).Icon, actionOf(mod.uuid).States[0].Image, `${mod.uuid} has a single state`);
   }
 });
 
@@ -525,6 +547,36 @@ test('the service carries none of the paths that were removed', () => {
   // asserted in the registry tests.
   const transport = readFileSync(new URL('../plugin/service/core/wavelink.js', import.meta.url), 'utf8');
   assert.doesNotMatch(transport, /getState\(\)/, 'getState had no caller');
+});
+
+test('a notification repaints the deck in one pass, not one pass per key', () => {
+  // refreshAll used to call refresh(ctx) per entry, and refresh() walked every context
+  // and reconciled both caches before painting its one key. A single notification about
+  // one channel therefore walked the whole deck once per key on it -- quadratic, on the
+  // path Wave Link takes several times a second while a knob turns.
+  //
+  // Asserted on the shape rather than on a measurement: app.js connects to the host the
+  // moment it is imported, so it cannot be loaded here, and a stopwatch in a unit test
+  // would prove nothing about complexity anyway.
+  const service = jsCode('service/app.js');
+  const block = service.slice(service.indexOf('function refreshAll('));
+  const body = block.slice(0, block.indexOf('\n}') + 2);
+
+  assert.match(body, /pruneCaches\(\)/, 'the caches are reconciled once');
+  assert.doesNotMatch(
+    body,
+    /refresh\(/,
+    'not once per key, which is what made it quadratic'
+  );
+  assert.match(body, /paint\(ctx, entry\)/, 'the loop paints directly');
+  // And the work it delegates has to exist.
+  assert.match(service, /function paint\(ctx, entry, options\)/);
+  assert.match(service, /function pruneCaches\(\)/);
+  assert.doesNotMatch(
+    service,
+    /function paint[\s\S]*?function paint\(/,
+    'paint is defined once'
+  );
 });
 
 test('the bound channel is copied before the registry is attached to it', () => {

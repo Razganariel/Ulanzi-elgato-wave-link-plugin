@@ -7,8 +7,12 @@
  *    Title field, and it repaints the key whenever it sees fit. This module never
  *    publishes a title, never publishes a level, and never asks for a redraw it does
  *    not need.
- *  - The dial is the one thing the host does not own, so the plugin fills it once
- *    with the name of whatever it is bound to. It changes only when the binding does.
+ *  - The dial's text is the host's too: the Title field covers the key and its dial
+ *    alike. The one thing we draw there is the icon, which follows the mute of the
+ *    bound scope -- the same state a press toggles, so the two cannot disagree. An
+ *    earlier version filled the layout's title with the name of the bound channel or
+ *    mix; it fought the host for the field and lost the user's typing every time the
+ *    key was repainted.
  *  - Wave Link notifies on every level change, several times a second while a knob
  *    turns. None of that is worth drawing: the fader already shows the level.
  *

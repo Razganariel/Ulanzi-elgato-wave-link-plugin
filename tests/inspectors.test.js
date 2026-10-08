@@ -12,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { PLUGIN_ROOT, PI_ROOT } from './helpers.js';
+import { PLUGIN_ROOT, PI_ROOT, jsCode, stripComments } from './helpers.js';
 
 const read = (relative) => readFileSync(`${PLUGIN_ROOT}/${relative}`, 'utf8');
 const readInspector = (name) => readFileSync(`${PI_ROOT}/${name}`, 'utf8');
@@ -70,13 +70,13 @@ test('a text setting is captured while typing, not only on blur', () => {
   // `change` on a text field fires on blur. A label typed and then abandoned -- the
   // user reaching for the dial -- never reached the service, so the dial reverted to
   // the bound name on the next repaint.
-  const shared = readInspector('shared.js');
+  const shared = code('property-inspector/shared.js');
   assert.match(shared, /addEventListener\('input'/, 'shared.js must listen to input events');
   assert.match(shared, /addEventListener\('change'/, 'and still to change events');
 });
 
 test('settings arriving from the host do not overwrite the field being typed in', () => {
-  const shared = readInspector('shared.js');
+  const shared = code('property-inspector/shared.js');
   assert.match(shared, /document\.activeElement/, 'hydration must skip the focused control');
 });
 
@@ -138,17 +138,10 @@ test('every action that moves a level offers the same three controls', () => {
   }
 });
 
-/**
- * A source file with its comments removed.
- *
- * Scanning source for a forbidden construct reads prose too, and a comment explaining
- * why innerHTML is not used contains the very word being hunted -- the check below
- * failed on its own justification. Line and block comments go; string literals are
- * left alone, which is a known limit and harmless for the checks that use this.
- */
-const code = (relative) => read(relative)
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+/** A file under property-inspector/, comments removed. */
+const code = (relative) => stripComments(read(relative));
+
 
 test('the cache-buster carries the version the panels actually report', () => {
   // The WebView caches shared.js while re-reading the HTML, so ?v= is the only thing
@@ -191,6 +184,88 @@ test('the pickers are built in one place, with one wording', () => {
   }
 });
 
+/**
+ * Boots shared.js far enough to exercise bootForm, with a recording $UD and a real
+ * form, so the hydration path can be driven without a WebView.
+ */
+function bootShared() {
+  const source = read('property-inspector/shared.js');
+  const sent = [];
+  const form = fakeNode('form');
+  form.addEventListener = () => {};
+  form.querySelector = () => null;
+  const window = { addEventListener() {}, PI: null };
+  const document = {
+    activeElement: null,
+    addEventListener() {},
+    getElementById: () => null,
+    querySelector: () => form,
+    createElement: () => fakeNode('div'),
+    body: { appendChild() {} },
+  };
+  const $UD = {
+    connect() {},
+    sendToPlugin(payload) { sent.push(payload); },
+    onParamFromApp() {},
+    onDidReceiveSettings() {},
+    onSendToPropertyInspector() {},
+    on() {},
+  };
+  const Utils = { debounce: (fn) => fn, getFormValue: () => ({}), setFormValue() {} };
+  vm.runInNewContext(source, { window, document, console, $UD, Utils, setTimeout });
+  window.PI.bootForm(form, {});
+  return { sent, form };
+}
+
+test('replayed settings do not make the panel write back for nothing', () => {
+  // The host replays its stored settings on every key selection. Forcing a re-report
+  // each time meant every click on the deck produced a pi-form back to the service --
+  // a form that had not changed, logged, for nothing. reportForm compares on its own,
+  // so the only thing to check is that the cache is no longer thrown away first.
+  const shared = code('property-inspector/shared.js');
+  const body = shared.slice(shared.indexOf('const applySettings'));
+  const block = body.slice(0, body.indexOf('});') + 3);
+  assert.doesNotMatch(
+    block,
+    /lastReported = null/,
+    'a forced re-report makes every settings replay write back to the service'
+  );
+});
+
+test('the settings hook is told what was applied, not what was held', () => {
+  // A hook handed the whole incoming set would put the focused control's value back
+  // under the user's cursor -- the exact thing the skip is there to prevent. The hook
+  // receives the fields that were actually applied.
+  const shared = code('property-inspector/shared.js');
+  const body = shared.slice(shared.indexOf('const applySettings'));
+  const block = body.slice(0, body.indexOf('});') + 3);
+  assert.match(block, /options\.onSettings\(applied\)/, 'the hook takes the applied set');
+  assert.doesNotMatch(block, /options\.onSettings\(settings/, 'never the whole incoming set');
+});
+
+test('the connect panel has one listener, not two', () => {
+  // bootForm already installs onSendToPropertyInspector and routes state and error
+  // messages to the hooks. A second listener in this panel meant two handlers on the
+  // same message and a second place to keep in step with the protocol.
+  const shared = code('property-inspector/shared.js');
+  const panel = code('property-inspector/connect/inspector.js');
+  assert.doesNotMatch(panel, /onSendToPropertyInspector/, 'the panel must not install its own');
+  assert.match(panel, /onState\(payload\)/, 'it routes state through the hook');
+  assert.match(panel, /onError\(message\)/, 'and errors too');
+  assert.match(shared, /payload\.event === 'error' && options\.onError/, 'and shared.js delivers them');
+});
+
+test('the connect panel debug box cannot grow without bound', () => {
+  const panel = code('property-inspector/connect/inspector.js');
+  assert.match(panel, /MAX_LINES/, 'lines are capped');
+  assert.match(panel, /\.slice\(0, MAX_LINES\)/, 'and the cap is applied');
+  assert.doesNotMatch(
+    panel,
+    /debugEl\.textContent = `[^\n]*\+ debugEl\.textContent/,
+    'prepending to the whole text grows it for the life of the session'
+  );
+});
+
 test('the pickers never inject a name as markup', () => {
   // The names come from Wave Link and are whatever the user typed there. Building them
   // as HTML would run it in this WebView.
@@ -209,7 +284,6 @@ test('only core/scope.js looks a junction up inside a channel', () => {
   // The word "mixes" is not evidence on its own: in the registry it is part of the wire
   // protocol -- the mixesChanged event, lastState.mixes, the { mixes: [...] } payload.
   // What must not be repeated is locating one junction inside a channel.
-  const serviceRoot = new URL('../plugin/service/', import.meta.url);
   const reads = [
     'actions/channel-volume.js',
     'actions/channel-volume-up.js',
@@ -221,9 +295,7 @@ test('only core/scope.js looks a junction up inside a channel', () => {
   ];
 
   for (const relative of reads) {
-    const source = readFileSync(new URL(relative, serviceRoot), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const source = jsCode(`service/${relative}`);
     assert.doesNotMatch(
       source,
       /mixes\s*\?*\.\s*find\(/,
@@ -233,7 +305,7 @@ test('only core/scope.js looks a junction up inside a channel', () => {
 
   // And the modules that bind a scope have to be reading it from there.
   for (const relative of ['actions/channel-volume.js', 'actions/channel-mute.js', 'core/registry.js']) {
-    const source = readFileSync(new URL(relative, serviceRoot), 'utf8');
+    const source = jsCode(`service/${relative}`);
     assert.match(
       source,
       /from '[^']*scope\.js'/,
@@ -339,17 +411,17 @@ test('settings are saved through a channel the host actually persists', () => {
   // earlier, and never carrying a newly added one. A sendParamFromPlugin from here
   // therefore leaves no trace: the edit is simply lost when the key is reselected.
   // sendToPlugin reaches the service, which persists it with setSettings.
-  const shared = readInspector('shared.js');
+  const shared = code('property-inspector/shared.js');
   assert.match(shared, /sendToPlugin\(\{\s*event: 'set-settings'/, 'shared.js must save through sendToPlugin');
   assert.doesNotMatch(shared, /sendParamFromPlugin\(/, 'shared.js must not use the channel the host ignores');
 
-  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+  const service = jsCode('service/app.js');
   assert.doesNotMatch(service, /sendParamFromPlugin\(/, 'the service must not echo into the void either');
   assert.match(service, /setSettings\(current\.settings, context\)/, 'the service must persist what the panel sends');
 });
 
 test('a panel edit is merged, so settings the host still holds are not pruned', () => {
-  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+  const service = jsCode('service/app.js');
   assert.match(
     service,
     /current\.settings = \{ \.\.\.current\.settings, \.\.\.\(payload\.settings \|\| \{\}\) \}/,
@@ -362,12 +434,12 @@ test('no action publishes a title, and none asks for one', () => {
   // worse than useless twice over: it overwrote what the user typed there, and the
   // value it sent was rebuilt from the live level, so it changed on every
   // notification. Removing it leaves the key entirely to the host.
-  const ui = readFileSync(new URL('../plugin/service/core/ui.js', import.meta.url), 'utf8');
+  const ui = jsCode('service/core/ui.js');
   assert.doesNotMatch(ui, /export function setTitle/, 'ui.js must not offer setTitle');
 
   for (const action of manifest.Actions) {
     const short = action.UUID.split('.').pop();
-    const source = readFileSync(new URL(`../plugin/service/actions/${short}.js`, import.meta.url), 'utf8');
+    const source = jsCode(`service/actions/${short}.js`);
     assert.doesNotMatch(source, /setTitle\(/, `${action.Name} must not publish a title`);
     assert.doesNotMatch(source, /title: ''/, `${action.Name} must not declare a title setting`);
     assert.doesNotMatch(read(action.PropertyInspectorPath), /name="title"/, `${action.Name} must not ask for one`);
@@ -382,7 +454,7 @@ test('an unchanged inspector payload is not resent, but a new panel always is', 
   // and empty pickers, because its WebView was created empty and nothing told us.
   //
   // So the payload is compared, and the panel's own get-registry forces the send.
-  const service = readFileSync(new URL('../plugin/service/app.js', import.meta.url), 'utf8');
+  const service = jsCode('service/app.js');
   assert.match(service, /lastInspectorPayload/, 'the payload must be compared');
   assert.match(
     service,
@@ -415,7 +487,7 @@ test('an unchanged inspector payload is not resent, but a new panel always is', 
 });
 
 test('a draw is deduplicated, so a repaint with nothing new emits nothing', () => {
-  const ui = readFileSync(new URL('../plugin/service/core/ui.js', import.meta.url), 'utf8');
+  const ui = jsCode('service/core/ui.js');
   assert.match(ui, /lastStateIcon\.get\(context\) === key/, 'the state icon must be deduplicated');
   assert.match(ui, /lastEncoderIcon\.get\(context\) === image/, 'the dial icon must be deduplicated');
 });

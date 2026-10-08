@@ -531,6 +531,31 @@ test('a channel handed to an action is a copy, and stays serialisable', () => {
   assert.doesNotThrow(() => JSON.stringify(carried), 'and it can still be serialised');
 });
 
+test('what a panel receives cannot reach the cache it was built from', () => {
+  // registry.getChannels() hands out the transport's live arrays -- it has to, because
+  // the optimistic writes go into them and the notification merges into them in place.
+  // The protection is what is built from those arrays, not the arrays themselves.
+  const { registry } = fixture({
+    channels: [{ id: 'ch1', name: 'Mic', level: 0.5, isMuted: false, mixes: [] }],
+    mixes: [{ id: 'mix1', name: 'Stream Mix', level: 1, isMuted: false }],
+  });
+
+  // This is what pickerLists builds: fresh objects, carrying an id and a name only.
+  const panelSees = {
+    channels: registry.getChannels().map((c) => ({ id: c.id, name: c.name })),
+    mixes: registry.getMixes().map((m) => ({ id: m.id, name: m.name })),
+  };
+  assert.deepEqual(panelSees.channels, [{ id: 'ch1', name: 'Mic' }]);
+  assert.ok(!('level' in panelSees.channels[0]), 'and no level, which is what made the payload churn');
+
+  // Anything that comes back out of it cannot be traced to the cache.
+  panelSees.channels[0].name = 'tampered';
+  panelSees.channels.push({ id: 'ghost', name: 'ghost' });
+  assert.equal(registry.getChannel('ch1').name, 'Mic', 'the channel is untouched');
+  assert.equal(registry.getChannels().length, 1, 'and no entry was added');
+  assert.doesNotThrow(() => JSON.stringify(panelSees), 'the payload stays serialisable');
+});
+
 test('a scope reads the same way everywhere it is asked about', () => {
   // The four action modules and the registry used to each carry their own copy of this,
   // and they drifted: an encoder showed the channel's mute while its press only touched

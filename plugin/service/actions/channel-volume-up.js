@@ -6,7 +6,7 @@
  * host owns the title.
  */
 
-import { ACTION, LIMITS, VOLUME_STEPS } from '../core/constants.js';
+import { ACTION, LIMITS, STATE, VOLUME_STEPS } from '../core/constants.js';
 import { clampFloat, dialStep, volumeBounds } from '../core/params.js';
 import { scopeLevel } from '../core/scope.js';
 import { setStateIcon } from '../core/ui.js';
@@ -24,7 +24,7 @@ export const defaults = {
 
 
 export function render({ $UD, context }) {
-  setStateIcon($UD, context, 0);
+  setStateIcon($UD, context, STATE.DEFAULT);
 }
 
 export async function onRun({ settings, channel, report }) {

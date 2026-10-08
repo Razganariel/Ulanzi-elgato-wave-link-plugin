@@ -163,6 +163,19 @@ export class WaveLinkRegistry extends EventEmitter {
     return this._client.connected;
   }
 
+  /**
+   * The registry's own view of the cache, shared and mutable.
+   *
+   * These arrays and the objects in them are the transport's live state, not a copy:
+   * the optimistic writes above depend on writing into them, and the notification that
+   * follows merges into them in place. Copying here would break both.
+   *
+   * So ownership is stated instead. Nothing outside this module may write to what these
+   * return, and app.js keeps to it by copying before an action ever sees a channel --
+   * see boundChannel, and the copy is what keeps a registry off the inspector payload.
+   * The lists the property inspector receives are built field by field, so nothing
+   * handed to a panel can reach the cache either.
+   */
   getChannels() {
     return this._client.lastState.channels || [];
   }

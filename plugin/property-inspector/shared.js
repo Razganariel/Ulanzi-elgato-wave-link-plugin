@@ -55,7 +55,7 @@
   // Bump when the behaviour below changes: the inspector WebView caches this file
   // while re-reading the HTML, so the version is the only way to tell from the
   // service log which copy of this script a panel is actually running.
-  const PI_VERSION = 5;
+  const PI_VERSION = 6;
 
   /**
    * Reports the form's actual contents to the service whenever they change,
@@ -111,16 +111,24 @@
       // text, so the element in focus is left alone until they leave it.
       const focused = document.activeElement;
       const skip = focused && focused.form === form ? focused.name : null;
+      let applied = settings || {};
       if (skip) {
-        const { [skip]: _held, ...rest } = settings || {};
-        Utils.setFormValue(rest, form);
+        const { [skip]: _held, ...rest } = applied;
+        applied = rest;
+        Utils.setFormValue(applied, form);
       } else {
-        Utils.setFormValue(settings, form);
+        Utils.setFormValue(applied, form);
       }
-      // Some controls (a select, notably) need their value applied after
-      // hydration, not just the fields the form knows how to draw.
-      if (options.onSettings) options.onSettings(settings || {});
-      lastReported = null;
+      // Some controls (a select, notably) need their value applied after hydration,
+      // not just the fields the form knows how to draw. They are told about the fields
+      // that were actually applied, not about the whole incoming set: the one the user
+      // has hold of is deliberately absent, and a hook that were handed it would put
+      // the value back under their cursor.
+      if (options.onSettings) options.onSettings(applied);
+      // Deliberately no forced re-report. The host replays on every key selection, and
+      // resetting the cache made each of those write a pi-form back to the service, for
+      // a form that had not changed. reportForm below compares on its own and stays
+      // quiet unless something really differs.
       reportForm(form);
     };
     $UD.onParamFromApp((message) => applySettings(message.param));
