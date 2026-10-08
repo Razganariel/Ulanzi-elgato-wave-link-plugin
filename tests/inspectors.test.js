@@ -27,8 +27,11 @@ const manifest = JSON.parse(readFileSync(new URL('../plugin/manifest.json', impo
 const EXPECTED = {
   'Channel Mute': ['channelId', 'mixId', 'behaviour'],
   'Channel Volume': ['channelId', 'mixId', 'step', 'min', 'max'],
-  'Channel Volume Up': ['channelId', 'mixId', 'step'],
-  'Channel Volume Down': ['channelId', 'mixId', 'step'],
+  // The range travels with the action, not with the channel: settings are stored per
+  // key, so a button could never have read the dial's min/max. Every action that moves
+  // a level therefore offers the same three controls and reads the same three.
+  'Channel Volume Up': ['channelId', 'mixId', 'step', 'min', 'max'],
+  'Channel Volume Down': ['channelId', 'mixId', 'step', 'min', 'max'],
   'Mix Volume': ['mixId', 'step', 'min', 'max'],
   'Mix Mute': ['mixId', 'behaviour'],
   Connect: [],
@@ -104,6 +107,33 @@ test('no inspector offers a setting the service ignores', () => {
     for (const field of new Set(fields)) {
       assert.ok(expected.includes(field), `${action.Name} exposes "${field}", which the action does not read`);
     }
+  }
+});
+
+test('every action that moves a level offers the same three controls', () => {
+  // The other test checks that no panel offers more than its action reads. This one
+  // checks the other direction: that a panel offers everything its action reads.
+  //
+  // It is what stops the range from drifting apart again. The two volume dials offered
+  // Min and Max while the + and - buttons did not, so the same channel had one
+  // reachable range on one key and the full 0..1 on another. An allowlist per action
+  // cannot catch that -- it happily records a button with no range at all.
+  const VOLUME_ACTIONS = ['Channel Volume', 'Channel Volume Up', 'Channel Volume Down', 'Mix Volume'];
+
+  for (const name of VOLUME_ACTIONS) {
+    const declared = manifest.Actions.find((a) => a.Name === name);
+    assert.ok(declared, `${name} is not in the manifest`);
+    const html = read(declared.PropertyInspectorPath);
+    const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
+    const fields = [...form.matchAll(/<(?:input|select|textarea)\b[^>]*\bname="([\w]+)"/g)].map((m) => m[1]);
+    for (const control of ['step', 'min', 'max']) {
+      assert.ok(fields.includes(control), `${name} moves a level but offers no ${control}`);
+    }
+    assert.deepEqual(
+      EXPECTED[name].filter((f) => ['step', 'min', 'max'].includes(f)),
+      ['step', 'min', 'max'],
+      `${name} must be listed as reading all three`
+    );
   }
 });
 

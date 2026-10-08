@@ -24,7 +24,7 @@
 
 import { ACTION, ENCODER_ICON, LIMITS, STATE, VOLUME_STEPS } from '../core/constants.js';
 import { rotateSteps } from '../core/dial.js';
-import { clampFloat, dialStep } from '../core/params.js';
+import { clampFloat, dialStep, volumeBounds } from '../core/params.js';
 import { setEncoderIcon, setStateIcon } from '../core/ui.js';
 
 export const uuid = ACTION.CHANNEL_VOLUME;
@@ -37,12 +37,6 @@ export const defaults = {
   mixId: '',
   step: LIMITS.VOLUME_STEP,
 };
-
-function bounds(settings) {
-  const min = clampFloat(settings.min ?? LIMITS.VOLUME_MIN, LIMITS.VOLUME_MIN, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MIN);
-  const max = clampFloat(settings.max ?? LIMITS.VOLUME_MAX, min, LIMITS.VOLUME_MAX, LIMITS.VOLUME_MAX);
-  return { min, max };
-}
 
 function currentLevel(channel, mixId) {
   if (!channel) return 0;
@@ -76,7 +70,7 @@ export async function onDialRotate(ctx, message) {
   if (!channel) return;
   const direction = rotateSteps(message);
   if (direction === 0) return;
-  const { min, max } = bounds(settings);
+  const { min, max } = volumeBounds(settings);
   const step = dialStep(settings.step, 0.01, max - min, defaults.step, VOLUME_STEPS);
   const level = currentLevel(channel, settings.mixId);
   const next = clampFloat(level + direction * step, min, max, level);

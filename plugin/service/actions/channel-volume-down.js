@@ -5,7 +5,7 @@
  */
 
 import { ACTION, LIMITS, VOLUME_STEPS } from '../core/constants.js';
-import { clampFloat, dialStep } from '../core/params.js';
+import { clampFloat, dialStep, volumeBounds } from '../core/params.js';
 import { setStateIcon } from '../core/ui.js';
 
 export const uuid = ACTION.CHANNEL_VOLUME_DOWN;
@@ -37,8 +37,9 @@ export async function onRun({ settings, channel, report }) {
     report(new Error('No channel selected'));
     return;
   }
-  const step = dialStep(settings.step, 0.01, 1, defaults.step, VOLUME_STEPS);
-  const next = clampFloat(currentLevel(channel, settings.mixId) - step, 0, 1);
+  const { min, max } = volumeBounds(settings);
+  const step = dialStep(settings.step, 0.01, max - min, defaults.step, VOLUME_STEPS);
+  const next = clampFloat(currentLevel(channel, settings.mixId) - step, min, max);
   try {
     await channel.registry.setChannelVolume(channel.id, next, settings.mixId || null);
   } catch (err) {

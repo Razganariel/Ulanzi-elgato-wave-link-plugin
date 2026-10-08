@@ -33,6 +33,7 @@ import * as mixVolume from '../plugin/service/actions/mix-volume.js';
 import * as mixMute from '../plugin/service/actions/mix-mute.js';
 import * as connect from '../plugin/service/actions/connect.js';
 import { ACTION, ENCODER_ICON, STATE, VOLUME_STEPS } from '../plugin/service/core/constants.js';
+import { volumeBounds } from '../plugin/service/core/params.js';
 import { forgetHostDisplay, pruneHostDisplay } from '../plugin/service/core/ui.js';
 
 const manifest = JSON.parse(readFileSync(new URL('../plugin/manifest.json', import.meta.url), 'utf8'));
@@ -55,6 +56,7 @@ function recordingRegistry() {
       calls.push(['setChannel', id, mixId ? { mixes: [{ id: mixId, level }] } : { level }]),
     toggleChannelMute: (id, mixId) => calls.push(['toggleChannelMute', id, mixId]),
     setMixMute: (id, muted) => calls.push(['setMix', id, { isMuted: muted }]),
+    setMixVolume: (id, level) => calls.push(['setMix', id, { level }]),
     toggleMixMute: (id) => calls.push(['toggleMixMute', id]),
   };
 }
@@ -555,6 +557,67 @@ test('pressing a channel dial toggles the scope it is bound to', async () => {
 
   assert.deepEqual(await press(channelVolume, ''), [['toggleChannelMute', 'ch1', null]]);
   assert.deepEqual(await press(channelVolume, 'mix1'), [['toggleChannelMute', 'ch1', 'mix1']]);
+});
+
+test('every volume action refuses to leave the range it was given', async () => {
+  // The range belongs to the action, not to the channel: settings are stored per key,
+  // so the + and - buttons could never have read the min/max a dial was configured
+  // with. They clamped to 0..1 instead, and a channel the user had capped at 0.8 on
+  // one key could be walked straight past that cap from another.
+  const levelOf = (call) => call[2].mixes ? call[2].mixes[0].level : call[2].level;
+
+  const actions = [
+    ['channel-volume', channelVolume, { channelId: 'ch1', mixId: '' }, { registry: null }],
+    ['channel-volume-up', channelVolumeUp, { channelId: 'ch1', mixId: '' }, { registry: null }],
+    ['channel-volume-down', channelVolumeDown, { channelId: 'ch1', mixId: '' }, { registry: null }],
+  ];
+
+  for (const [name, mod, base, extra] of actions) {
+    for (const [from, dir] of [[0.79, 1], [0.21, -1]]) {
+      const registry = recordingRegistry();
+      const ctx = {
+        settings: { step: '0.05', min: '0.2', max: '0.8', ...base },
+        channel: { ...channel({ level: from }), registry },
+        mix: mix(),
+        report: (e) => assert.fail(`${name} reported ${e.message}`),
+        ...extra,
+      };
+      if (mod.onRun) await mod.onRun(ctx);
+      else await mod.onDialRotate(ctx, { rotateEvent: dir > 0 ? 'right' : 'left' });
+
+      const [call] = registry.calls;
+      const level = levelOf(call);
+      assert.ok(
+        level >= 0.2 && level <= 0.8,
+        `${name} left its 0.2-0.8 range, asking for ${level}`
+      );
+    }
+  }
+
+  // And the mix dial, which carries the same controls.
+  const registry = recordingRegistry();
+  await mixVolume.onDialRotate(
+    {
+      settings: { step: '0.05', min: '0.3', max: '0.6', mixId: 'mix1' },
+      mix: { ...mix({ level: 0.59 }), registry },
+      report: (e) => assert.fail(`mix-volume reported ${e.message}`),
+    },
+    { rotateEvent: 'right' }
+  );
+  assert.ok(levelOf(registry.calls[0]) <= 0.6, 'the mix dial left its own range');
+});
+
+test('a range that no step can satisfy still leaves one usable level', () => {
+  // An inverted pair, which a number field allows: Min 0.9, Max 0.1. Clamped to a
+  // single level rather than to a range no step could fit into.
+  const bounds = volumeBounds({ min: '0.9', max: '0.1' });
+  assert.equal(bounds.min, 0.9);
+  assert.equal(bounds.max, 0.9);
+});
+
+test('a volume action defaults to the full range when it has none', () => {
+  assert.deepEqual(volumeBounds({}), { min: 0, max: 1 });
+  assert.deepEqual(volumeBounds({ min: '', max: '' }), { min: 0, max: 1 }, 'a cleared field is not zero');
 });
 
 test('the Channel Mute button targets the same scope as the dial', async () => {
