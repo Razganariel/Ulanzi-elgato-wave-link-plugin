@@ -10,6 +10,7 @@
  */
 
 import { ACTION, STATE } from '../core/constants.js';
+import { scopeMuted } from '../core/scope.js';
 import { setStateIcon } from '../core/ui.js';
 
 export const uuid = ACTION.CHANNEL_MUTE;
@@ -22,12 +23,6 @@ export const defaults = {
   mixId: '',
   behaviour: 'toggle',
 };
-
-/** The mute of the bound scope, which is also the scope a press acts on. */
-function scopeMuted(channel, mixId) {
-  if (mixId) return Boolean(channel?.mixes?.find((m) => m.id === mixId)?.isMuted);
-  return Boolean(channel?.isMuted);
-}
 
 export function render({ $UD, context, channel, settings }) {
   setStateIcon($UD, context, scopeMuted(channel, settings.mixId) ? STATE.MUTED : STATE.UNMUTED);

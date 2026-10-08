@@ -10,6 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { PLUGIN_ROOT, PI_ROOT } from './helpers.js';
 
@@ -135,6 +136,201 @@ test('every action that moves a level offers the same three controls', () => {
       `${name} must be listed as reading all three`
     );
   }
+});
+
+/**
+ * A source file with its comments removed.
+ *
+ * Scanning source for a forbidden construct reads prose too, and a comment explaining
+ * why innerHTML is not used contains the very word being hunted -- the check below
+ * failed on its own justification. Line and block comments go; string literals are
+ * left alone, which is a known limit and harmless for the checks that use this.
+ */
+const code = (relative) => read(relative)
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+test('the cache-buster carries the version the panels actually report', () => {
+  // The WebView caches shared.js while re-reading the HTML, so ?v= is the only thing
+  // telling a stale script from a new one. Checking that a number is present is not
+  // enough: a panel left on ?v=4 serves the previous shared.js, so PI.fillSelect would
+  // be missing and the panel would do nothing at all, with no error to trace it.
+  const shared = read('property-inspector/shared.js');
+  const declared = shared.match(/const PI_VERSION = (\d+)/)[1];
+
+  for (const action of manifest.Actions) {
+    const html = read(action.PropertyInspectorPath);
+    const used = html.match(/shared\.js\?v=(\d+)/)[1];
+    assert.equal(
+      used,
+      declared,
+      `${action.Name} loads shared.js?v=${used} but the script reports ${declared}`
+    );
+  }
+});
+
+test('the pickers are built in one place, with one wording', () => {
+  // Six panels used to carry their own copy of the loop that fills a <select>, and the
+  // empty option had to read the same across panels offering the same choice -- a
+  // Channel Mute panel and a Channel Volume panel must not describe "no mix" two ways.
+  // Nothing held that except copy-paste discipline, and M5 made it worse: giving the
+  // two one-step buttons their channel and mix pickers duplicated the code again.
+  const shared = read('property-inspector/shared.js');
+  assert.match(shared, /fillSelect\(select, items, selectedId, blank\)/, 'shared.js owns the loop');
+  assert.match(shared, /mixBlank\(count, optional\)/, 'and the wording of the empty option');
+
+  for (const action of manifest.Actions) {
+    if (action.Name === 'Connect') continue;
+    const js = read(action.PropertyInspectorPath.replace('inspector.html', 'inspector.js'));
+    assert.doesNotMatch(
+      js,
+      /document\.createElement\('option'\)/,
+      `${action.Name} rebuilds options by hand instead of using PI.fillSelect`
+    );
+    assert.match(js, /PI\.fillSelect\(/, `${action.Name} must fill its pickers through shared.js`);
+  }
+});
+
+test('the pickers never inject a name as markup', () => {
+  // The names come from Wave Link and are whatever the user typed there. Building them
+  // as HTML would run it in this WebView.
+  const shared = code('property-inspector/shared.js');
+  assert.doesNotMatch(shared, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.match(shared, /option\.textContent = item\.name \|\| item\.id;/);
+});
+
+test('only core/scope.js looks a junction up inside a channel', () => {
+  // The structural half of the same rule, on the service side. Reading a junction was
+  // written out in four modules and they drifted: an encoder showing the channel's mute
+  // while its press only touched a junction, and a step measured from the channel's
+  // level with a junction bound. Nothing stopped the fourth copy appearing, so nothing
+  // but the shape of the code stops it here.
+  //
+  // The word "mixes" is not evidence on its own: in the registry it is part of the wire
+  // protocol -- the mixesChanged event, lastState.mixes, the { mixes: [...] } payload.
+  // What must not be repeated is locating one junction inside a channel.
+  const serviceRoot = new URL('../plugin/service/', import.meta.url);
+  const reads = [
+    'actions/channel-volume.js',
+    'actions/channel-volume-up.js',
+    'actions/channel-volume-down.js',
+    'actions/channel-mute.js',
+    'actions/mix-volume.js',
+    'actions/mix-mute.js',
+    'core/registry.js',
+  ];
+
+  for (const relative of reads) {
+    const source = readFileSync(new URL(relative, serviceRoot), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert.doesNotMatch(
+      source,
+      /mixes\s*\?*\.\s*find\(/,
+      `${relative} looks a junction up itself; use scopeLevel / scopeMuted / scopeEntry from core/scope.js`
+    );
+  }
+
+  // And the modules that bind a scope have to be reading it from there.
+  for (const relative of ['actions/channel-volume.js', 'actions/channel-mute.js', 'core/registry.js']) {
+    const source = readFileSync(new URL(relative, serviceRoot), 'utf8');
+    assert.match(
+      source,
+      /from '[^']*scope\.js'/,
+      `${relative} must read scopes through core/scope.js`
+    );
+  }
+});
+
+/** A stand-in for a <select> or an <option>, faithful about the two things that matter. */
+function fakeNode(tag) {
+  return {
+    tag,
+    value: '',
+    _text: '',
+    children: [],
+    get textContent() { return this._text; },
+    // Assigning textContent empties the node, which is how fillSelect clears it first.
+    set textContent(value) {
+      this._text = value;
+      if (value === '') this.children = [];
+    },
+    appendChild(child) { this.children.push(child); },
+  };
+}
+
+/**
+ * Runs shared.js in a sandbox and returns the PI it exposes.
+ *
+ * The file is an IIFE that touches only `window` at load time -- `$UD` and `Utils` are
+ * reached from inside its functions -- so a stub window is enough to run it. That buys
+ * real behavioural tests of the picker code instead of assertions about its source,
+ * which is the only way the empty-option wording can be pinned at all.
+ */
+function loadShared() {
+  const source = read('property-inspector/shared.js');
+  const window = { addEventListener() {}, PI: null };
+  const document = {
+    addEventListener() {},
+    getElementById: () => null,
+    querySelector: () => null,
+    createElement: () => fakeNode('option'),
+    body: { appendChild() {} },
+  };
+  vm.runInNewContext(source, { window, document, console });
+  return window.PI;
+}
+
+test('the empty option says what choosing nothing actually means', () => {
+  const PI = loadShared();
+
+  assert.equal(PI.channelBlank(3), 'Default channel', 'a channel picker always offers the default');
+  assert.equal(PI.channelBlank(0), 'No channel found', 'and says so when there is none');
+
+  assert.equal(PI.mixBlank(3, true), 'Overall volume', 'an optional mix scopes a level');
+  assert.equal(PI.mixBlank(3, false), 'No mix selected', 'a required mix has no such fallback');
+  assert.notEqual(
+    PI.mixBlank(3, true),
+    PI.mixBlank(3, false),
+    'the two meanings must not read the same, or a panel cannot be trusted for either'
+  );
+  assert.equal(PI.mixBlank(0, false), 'No mix found', 'with nothing to choose, it says so');
+
+  for (const label of [PI.channelBlank(1), PI.mixBlank(1, true), PI.mixBlank(1, false)]) {
+    assert.ok(label.trim().length > 0, `an empty label "${label}" would leave the picker unexplained`);
+  }
+});
+
+test('a picker keeps the bound choice and falls back to the names', () => {
+  const PI = loadShared();
+  const select = fakeNode('select');
+
+  PI.fillSelect(
+    select,
+    [{ id: 'a', name: 'Firefox' }, { id: 'b' }],
+    'b',
+    'Overall volume'
+  );
+
+  assert.deepEqual(
+    select.children.map((c) => c.value),
+    ['', 'a', 'b'],
+    'the empty option comes first, then every id'
+  );
+  assert.deepEqual(
+    select.children.map((c) => c.textContent),
+    ['Overall volume', 'Firefox', 'b'],
+    'an unnamed entry falls back to its id rather than a blank row'
+  );
+  assert.equal(select.value, 'b', 'and the bound choice is applied');
+
+  // An id the list no longer holds is left to the control: a real <select> resolves a
+  // value it cannot find to its first option, which is the empty one. The stub does
+  // not, so the case asserted here is the one the service actually sends -- no binding
+  // chosen yet, reported as an empty id.
+  PI.fillSelect(select, [{ id: 'a', name: 'Firefox' }], '', 'None');
+  assert.equal(select.value, '', 'an unbound key shows the empty option');
+  assert.equal(select.children.length, 2, 'and the previous options are gone, not appended to');
 });
 
 test('settings are saved through a channel the host actually persists', () => {

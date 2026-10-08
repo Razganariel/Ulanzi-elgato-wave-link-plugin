@@ -55,7 +55,7 @@
   // Bump when the behaviour below changes: the inspector WebView caches this file
   // while re-reading the HTML, so the version is the only way to tell from the
   // service log which copy of this script a panel is actually running.
-  const PI_VERSION = 4;
+  const PI_VERSION = 5;
 
   /**
    * Reports the form's actual contents to the service whenever they change,
@@ -173,6 +173,52 @@
       if (dot) dot.className = `dot ${state === 'connected' ? 'on' : state === 'error' ? 'off' : ''}`;
       if (label) label.textContent = state;
     },
+
+    /**
+     * Fills a <select> with the ids and names a panel needs.
+     *
+     * Four panels each had their own copy of this loop, and a fifth and sixth of the
+     * mix one, all of which had to keep the same wording for the empty option -- a
+     * Channel Mute panel and a Channel Volume panel offering the same choice must not
+     * describe it two different ways. Copy-paste is no way to hold that, so the wording
+     * lives here and the panels name it.
+     *
+     * @param blank  label of the empty option, the state of "nothing chosen"
+     */
+    fillSelect(select, items, selectedId, blank) {
+      select.textContent = '';
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = blank;
+      select.appendChild(empty);
+      for (const item of items) {
+        const option = document.createElement('option');
+        option.value = item.id;
+        // textContent, never innerHTML: the names come from Wave Link and a device
+        // called <img onerror=...> would otherwise run in this WebView.
+        option.textContent = item.name || item.id;
+        select.appendChild(option);
+      }
+      select.value = selectedId || '';
+    },
+
+    /** The empty option of a channel picker: a channel always is, or none was found. */
+    channelBlank(count) {
+      return count ? 'Default channel' : 'No channel found';
+    },
+
+    /**
+     * The empty option of a mix picker, which means two different things.
+     *
+     * Where a mix scopes a level -- Channel Volume, and the two one-step buttons -- the
+     * empty choice is "the whole channel", and the wording has to say so. Where a mix
+     * is the only thing the action can act on, it is simply nothing chosen yet.
+     */
+    mixBlank(count, optional) {
+      if (optional) return 'Overall volume';
+      return count ? 'No mix selected' : 'No mix found';
+    },
+
     boot,
   };
 })();

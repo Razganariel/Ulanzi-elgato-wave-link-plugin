@@ -12,6 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { WaveLinkRegistry } from '../plugin/service/core/registry.js';
+import { scopeEntry, scopeLevel, scopeMuted } from '../plugin/service/core/scope.js';
 
 /** Records every call instead of sending it, and holds the state Wave Link would. */
 class FakeClient extends EventEmitter {
@@ -509,6 +510,31 @@ test('a junction the host never reported is asked for, but never invented', asyn
   );
 });
 
+test('a scope reads the same way everywhere it is asked about', () => {
+  // The four action modules and the registry used to each carry their own copy of this,
+  // and they drifted: an encoder showed the channel's mute while its press only touched
+  // a junction, and a step was computed from the channel's level with a junction bound.
+  const channel = {
+    level: 0.4,
+    isMuted: true,
+    mixes: [{ id: 'mix1', level: 0.8, isMuted: false }],
+  };
+
+  assert.equal(scopeLevel(channel, ''), 0.4, 'no mix means the channel itself');
+  assert.equal(scopeLevel(channel, 'mix1'), 0.8, 'a mix means that junction');
+  assert.equal(scopeLevel(channel, 'unknown'), 0.4, 'an unreported junction measures from the channel');
+  assert.equal(scopeLevel(channel, null), 0.4);
+  assert.equal(scopeLevel(null, 'mix1'), 0, 'and nothing at all reads as silence');
+
+  assert.equal(scopeMuted(channel, ''), true);
+  assert.equal(scopeMuted(channel, 'mix1'), false, 'the two scopes stay independent');
+  assert.equal(scopeMuted(channel, 'unknown'), false, 'an unreported junction is not muted');
+  assert.equal(scopeMuted(null, 'mix1'), false);
+
+  assert.equal(scopeEntry(channel, ''), channel, 'no scope is the subject itself');
+  assert.equal(scopeEntry(channel, 'mix1'), channel.mixes[0]);
+  assert.equal(scopeEntry(channel, 'unknown'), null, 'and one the host never reported is null, not invented');
+});
 test('toggleMixMute inverts the cached state and refuses an unknown mix', async () => {
   const { client, registry } = fixture({ mixes: [{ id: 'mix1', level: 1, isMuted: false }] });
   await registry.toggleMixMute('mix1');

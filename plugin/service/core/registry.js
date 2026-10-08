@@ -6,6 +6,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { scopeEntry, scopeLevel, scopeMuted } from './scope.js';
 import { waveLinkClient } from './wavelink.js';
 
 /**
@@ -37,7 +38,7 @@ function setOptimistically(target, key, value) {
  * Writes a field, sends, and puts the field back if the request is refused.
  *
  * `target` may be null, in which case the request is simply sent with nothing written
- * first -- see junctionOf.
+ * first -- see scopeEntry in core/scope.js, which says why.
  */
 async function optimistically(target, key, value, send) {
   if (!target) return send();
@@ -48,25 +49,6 @@ async function optimistically(target, key, value, send) {
     undo();
     throw err;
   }
-}
-
-/**
- * The cache entry one scope of a channel lives in, or null when the host never
- * reported that scope.
- *
- * Inventing the entry was tried and had to be undone. The merge in _updateChannel only
- * overwrites the junctions a notification lists, so an entry invented here that the
- * host never confirms stays in the cache for the rest of the session: the key sits on a
- * mute or a level that never happened, with nothing to correct it. The property
- * inspector offers every mix for every channel without filtering, so a user can bind a
- * channel to a junction it does not belong to and reach it in two clicks.
- *
- * So a scope the host has not reported is sent for, and nothing is written first. Its
- * own notification brings it into the cache truthfully, and from then on it reads back.
- */
-function junctionOf(channel, mixId) {
-  if (!mixId) return channel;
-  return channel.mixes?.find((m) => m.id === mixId) || null;
 }
 
 export class WaveLinkRegistry extends EventEmitter {
@@ -221,15 +203,9 @@ export class WaveLinkRegistry extends EventEmitter {
     if (!channel) throw new Error(`Channel ${channelId} not found`);
     const muted = !this.channelMuted(channelId, mixId);
 
-    await optimistically(junctionOf(channel, mixId), 'isMuted', muted, () =>
+    await optimistically(scopeEntry(channel, mixId), 'isMuted', muted, () =>
       (mixId ? this.setChannelMuteInMix(channelId, mixId, muted) : this.setChannelMute(channelId, muted))
     );
-  }
-
-  /** The level of one scope of a channel, falling back to the channel's own. */
-  _scopeLevel(channel, mixId) {
-    if (!mixId) return channel.level;
-    return channel.mixes?.find((m) => m.id === mixId)?.level ?? channel.level;
   }
 
   async setChannelVolume(channelId, volume, mixId = null) {
@@ -250,10 +226,7 @@ export class WaveLinkRegistry extends EventEmitter {
    * useful at all.
    */
   channelMuted(channelId, mixId = null) {
-    const channel = this.getChannel(channelId);
-    if (!channel) return false;
-    if (!mixId) return Boolean(channel.isMuted);
-    return Boolean(channel.mixes?.find((m) => m.id === mixId)?.isMuted);
+    return scopeMuted(this.getChannel(channelId), mixId);
   }
 
   /** Mutes one scope: the whole channel, or just the channel within a mix. */
@@ -274,10 +247,10 @@ export class WaveLinkRegistry extends EventEmitter {
   async stepChannelVolume(channelId, delta, mixId = null) {
     const channel = this.getChannel(channelId);
     if (!channel) throw new Error(`Channel ${channelId} not found`);
-    const current = this._scopeLevel(channel, mixId);
+    const current = scopeLevel(channel, mixId);
     const next = normaliseLevel(current + delta);
 
-    await optimistically(junctionOf(channel, mixId), 'level', next, () =>
+    await optimistically(scopeEntry(channel, mixId), 'level', next, () =>
       this.setChannelVolume(channelId, next, mixId)
     );
   }
