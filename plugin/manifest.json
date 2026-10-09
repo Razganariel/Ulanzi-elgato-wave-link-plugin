@@ -3,7 +3,7 @@
   "Name": "Elgato Wave Link Control",
   "Description": "Control Elgato Wave Link audio channels and mixes from an Ulanzi D200X. Each key is bound to a channel or mix.",
   "Icon": "images/plugin.svg",
-  "Version": "0.1.0",
+  "Version": "1.0.0",
   "Category": "Audio",
   "CodePath": "service/app.js",
   "Type": "JavaScript",
