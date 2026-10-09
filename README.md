@@ -8,6 +8,17 @@ Testé sur Wave Link **3.3.0 (build 4529)** et Ulanzi Studio 3.x, sous Windows.
 
 ---
 
+<br>
+<table>
+  <tr>
+    <td align="center"><img src="docs/ulanzi-icon.jpg" height="96" alt="Ulanzi"></td>
+    <td align="center"><a href="https://ko-fi.com/razganariel"><img src="docs/Hibou-Ko-fi.png" height="96" alt="Ko-fi"></a></td>
+  </tr>
+</table>
+<br>
+
+---
+
 ## 1. Actions
 
 | Action | Contrôle | Rotation | Pression |
