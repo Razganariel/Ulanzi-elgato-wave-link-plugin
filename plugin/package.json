@@ -1,0 +1,14 @@
+{
+  "name": "com.ulanzi.ulanzistudio.wavelink.ulanziPlugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ulanzi D200X plugin driving Elgato Wave Link audio channels and mixes",
+  "main": "service/app.js",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

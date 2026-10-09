@@ -1,0 +1,5 @@
+node_modules/
+sdk/
+release/
+*.log
+*.ulanziPlugin/

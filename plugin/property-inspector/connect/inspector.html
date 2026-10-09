@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect Settings</title>
+  <link rel="stylesheet" href="../../libs/css/uspi.css" />
+  <link rel="stylesheet" href="../shared.css" />
+</head>
+<body data-actionid="com.ulanzi.ulanzistudio.wavelink.connect">
+  <div class="uspi-wrapper">
+  <form id="property-inspector">
+  <h1>Wave Link Connection</h1>
+  <p class="sub">Connect to Elgato Wave Link and refresh channel/mix list</p>
+
+  <section>
+    <legend>Connection</legend>
+    <div class="row">
+      <button id="connect-btn" type="button">Connect</button>
+      <button id="refresh-btn" type="button" class="ghost">Refresh</button>
+    </div>
+  </section>
+
+
+  <section>
+    <legend>Status</legend>
+    <div class="status" id="conn-status">
+      <span class="dot"></span>
+      <span class="label">Disconnected</span>
+    </div>
+    <div class="hint" id="info">Not connected to Wave Link</div>
+  </section>
+
+  <section>
+    <legend>Debug</legend>
+    <div class="mono" id="debug">Waiting for connection...</div>
+  </section>
+
+  </form>
+  </div>
+  <script src="../../libs/js/constants.js"></script>
+  <script src="../../libs/js/eventEmitter.js"></script>
+  <script src="../../libs/js/timers.js"></script>
+  <script src="../../libs/js/utils.js"></script>
+  <script src="../../libs/js/ulanziApi.js"></script>
+  <script src="../shared.js?v=7"></script>
+  <script src="inspector.js"></script>
+</body>
+</html>

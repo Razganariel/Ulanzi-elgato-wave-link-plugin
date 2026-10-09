@@ -1,0 +1,21 @@
+<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+  <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
+  <!-- Two devices connecting -->
+  <rect x="12" y="22" width="18" height="28" rx="4" fill="#333" stroke="#444" stroke-width="2"/>
+  <rect x="14" y="24" width="14" height="24" rx="2" fill="#1a1a1a"/>
+  <path d="M21 36 L28 36" stroke="#ff7a1a" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="21" cy="36" r="2" fill="#ff7a1a"/>
+  <circle cx="28" cy="36" r="2" fill="#ff7a1a"/>
+  
+  <rect x="42" y="22" width="18" height="28" rx="4" fill="#333" stroke="#444" stroke-width="2"/>
+  <rect x="44" y="24" width="14" height="24" rx="2" fill="#1a1a1a"/>
+  <path d="M51 36 L58 36" stroke="#ff7a1a" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="51" cy="36" r="2" fill="#ff7a1a"/>
+  <circle cx="58" cy="36" r="2" fill="#ff7a1a"/>
+  
+  <!-- Link between them -->
+  <path d="M30 36 L42 36" stroke="#1fe08a" stroke-width="4" stroke-linecap="round" stroke-dasharray="6,4"/>
+  <circle cx="36" cy="36" r="4" fill="#1fe08a"/>
+  
+  <text x="36" y="62" text-anchor="middle" font-size="8" fill="#888">CONNECT</text>
+</svg>

@@ -1,0 +1,15 @@
+<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+  <rect width="72" height="72" rx="12" fill="#1a1a1a"/>
+  <!-- Microphone, identical geometry to the muted one so the pair differs only in
+       colour and in the mark that says whether sound is passing. -->
+  <rect x="28" y="12" width="16" height="22" rx="8" fill="none" stroke="#1fe08a" stroke-width="4"/>
+  <path d="M20 30 A16 16 0 0 0 52 30" fill="none" stroke="#1fe08a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M36 46 L36 52" stroke="#1fe08a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M26 52 L46 52" stroke="#1fe08a" stroke-width="4" stroke-linecap="round"/>
+  <!-- Sound waves as quadratic curves rather than arcs. A control point says where the
+       curve goes, while an arc's sweep flag has to be derived and is easy to get
+       backwards, which puts the wave on the wrong side of the microphone. -->
+  <path d="M56 24 Q64 30 56 36" fill="none" stroke="#1fe08a" stroke-width="3" stroke-linecap="round" opacity="0.75"/>
+  <path d="M60 18 Q70 30 60 42" fill="none" stroke="#1fe08a" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+  <text x="36" y="62" text-anchor="middle" font-size="8" fill="#888">CH ON</text>
+</svg>
